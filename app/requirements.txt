@@ -1,0 +1,12 @@
+# Object Detector Web - Python dependencies (pinned for reproducibility / air-gap)
+Flask>=3.0,<4
+gunicorn>=22,<24
+gevent>=24.2
+opencv-python-headless>=4.9,<5
+numpy>=1.26,<3
+# Azure AI Vision 4.0 (current GA SDK) - primary analyzer
+azure-ai-vision-imageanalysis==1.0.0
+azure-core>=1.30
+# Legacy Computer Vision 3.2 SDK - optional fallback (Brands/Color, caption region fallback)
+azure-cognitiveservices-vision-computervision==0.9.0
+msrest>=0.7

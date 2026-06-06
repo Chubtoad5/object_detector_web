@@ -1,0 +1,25 @@
+Object Detector Web
+Copyright (C) 2026 Chubtoad5
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This is an original application. It builds on, and at runtime installs or calls,
+the following third-party open-source software and services, each under its own
+license (all credit to their respective authors):
+
+  - Caddy                  Apache-2.0   https://github.com/caddyserver/caddy
+  - Flask                  BSD-3-Clause https://github.com/pallets/flask
+  - Gunicorn               MIT          https://github.com/benoitc/gunicorn
+  - gevent                 MIT          https://github.com/gevent/gevent
+  - OpenCV (python-headless) Apache-2.0 https://github.com/opencv/opencv
+  - NumPy                  BSD-3-Clause https://github.com/numpy/numpy
+  - Azure AI Vision SDKs   MIT          https://github.com/Azure/azure-sdk-for-python
+  - FFmpeg                 LGPL/GPL*    https://ffmpeg.org/   (*depends on the distro build)
+
+The Azure AI Vision service itself is a proprietary Microsoft cloud service; this
+software calls it using a key that you supply, and does not redistribute it.
+
+When building an air-gap bundle (`deploy.sh save`), the bundle redistributes some
+of the above components (e.g. the Caddy binary and Python wheels). Their licenses
+travel with the bundle; for any copyleft component (e.g. a GPL-built FFmpeg),
+include the corresponding source or a written offer per that license.

@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Object Detector</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2a3242;
+    --txt:#e6edf3; --muted:#8b949e; --accent:#3b82f6; --accent2:#22d3ee;
+    --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --violet:#a855f7;
+    --radius:14px; --shadow:0 6px 24px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Segoe UI',system-ui,Arial,sans-serif;background:
+    radial-gradient(1200px 600px at 80% -10%,#15233b 0,transparent 60%),var(--bg);
+    color:var(--txt);min-height:100vh}
+  a{color:var(--accent2)}
+  header{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:16px;
+    padding:12px 20px;background:rgba(13,17,23,.85);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border)}
+  .logo{font-weight:700;font-size:1.15rem;letter-spacing:.3px;display:flex;align-items:center;gap:9px}
+  .logo .dot{width:11px;height:11px;border-radius:50%;background:var(--accent2);
+    box-shadow:0 0 12px var(--accent2)}
+  .ver{font-size:.7rem;color:var(--muted);font-weight:400}
+  .spacer{flex:1}
+  .budget{display:flex;flex-direction:column;min-width:190px}
+  .budget .bar{height:8px;border-radius:6px;background:#0a0e14;overflow:hidden;border:1px solid var(--border)}
+  .budget .fill{height:100%;background:linear-gradient(90deg,var(--ok),var(--accent2));width:0%}
+  .budget small{color:var(--muted);font-size:.68rem;margin-top:3px}
+  button,select,input[type=text],input[type=number]{font-family:inherit}
+  .btn{background:var(--panel2);color:var(--txt);border:1px solid var(--border);
+    padding:8px 14px;border-radius:10px;cursor:pointer;font-size:.85rem;transition:.15s}
+  .btn:hover{border-color:var(--accent);background:#222b3a}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:#2f6fd6}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .pill{font-size:.68rem;padding:3px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:6px}
+  .pill .d{width:7px;height:7px;border-radius:50%}
+  .pill.on{background:rgba(34,197,94,.15);color:#86efac}.pill.on .d{background:var(--ok)}
+  .pill.off{background:rgba(239,68,68,.13);color:#fca5a5}.pill.off .d{background:var(--bad)}
+
+  main{padding:20px;max-width:1700px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:18px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    overflow:hidden;box-shadow:var(--shadow);transition:box-shadow .2s,outline .1s;outline:2px solid transparent}
+  .card.alert{outline:2px solid var(--bad);box-shadow:0 0 0 4px rgba(239,68,68,.25),var(--shadow)}
+  .card .top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
+  .card .name{font-weight:600}
+  .card .meta{margin-left:auto;font-size:.7rem;color:var(--muted)}
+  .stage{position:relative;background:#000;aspect-ratio:16/9;width:100%}
+  .stage img{width:100%;height:100%;display:block;object-fit:contain}
+  .stage canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  .caption{position:absolute;left:0;right:0;bottom:0;padding:8px 12px;font-size:.85rem;
+    background:linear-gradient(transparent,rgba(0,0,0,.8));pointer-events:none}
+  .matchbadge{position:absolute;top:8px;left:8px;background:var(--bad);color:#fff;font-size:.7rem;
+    padding:3px 9px;border-radius:8px;display:none}
+  .card .bottom{display:flex;align-items:center;gap:8px;padding:10px 14px;flex-wrap:wrap}
+  .card .bottom .ts{margin-left:auto;font-size:.68rem;color:var(--muted)}
+  .tags{display:flex;flex-wrap:wrap;gap:5px;padding:0 14px 12px}
+  .tag{font-size:.68rem;background:var(--panel2);border:1px solid var(--border);
+    padding:2px 8px;border-radius:7px;color:var(--muted)}
+  .tag.hit{background:rgba(239,68,68,.18);color:#fca5a5;border-color:#7f1d1d}
+
+  /* drawer */
+  .drawer{position:fixed;top:0;right:0;height:100%;width:380px;max-width:92vw;background:var(--panel);
+    border-left:1px solid var(--border);box-shadow:-12px 0 40px rgba(0,0,0,.5);
+    transform:translateX(100%);transition:transform .25s;z-index:50;overflow-y:auto}
+  .drawer.open{transform:translateX(0)}
+  .drawer h3{margin:0;padding:16px 18px;border-bottom:1px solid var(--border);
+    position:sticky;top:0;background:var(--panel);display:flex;align-items:center}
+  .drawer h3 .x{margin-left:auto;cursor:pointer;color:var(--muted);font-size:1.2rem}
+  .sect{padding:14px 18px;border-bottom:1px solid var(--border)}
+  .sect h4{margin:0 0 10px;font-size:.78rem;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+  .row{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:.86rem}
+  .row label{flex:1}
+  .row input[type=number],.row input[type=text],.row select{background:#0a0e14;color:var(--txt);
+    border:1px solid var(--border);border-radius:8px;padding:6px 8px;width:120px}
+  .row input[type=text].wide{width:100%}
+  .switch{position:relative;width:40px;height:22px;flex:none}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:#2a3242;border-radius:22px;transition:.2s;cursor:pointer}
+  .slider:before{content:"";position:absolute;height:16px;width:16px;left:3px;top:3px;background:#fff;
+    border-radius:50%;transition:.2s}
+  .switch input:checked+.slider{background:var(--accent)}
+  .switch input:checked+.slider:before{transform:translateX(18px)}
+  .switch input:disabled+.slider{opacity:.4;cursor:not-allowed}
+  .cost{font-size:.72rem;color:var(--muted);margin-top:8px;line-height:1.5}
+  .cost b{color:var(--accent2)}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:45;display:none}
+  .overlay.open{display:block}
+  .iconbtn{background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);color:#fff;
+    width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:.95rem;line-height:1;
+    display:flex;align-items:center;justify-content:center;transition:.15s}
+  .iconbtn:hover{background:var(--accent);border-color:var(--accent)}
+  .stage .expand{position:absolute;top:8px;right:8px;opacity:0;transition:.15s}
+  .card:hover .stage .expand{opacity:1}
+
+  /* modals */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;padding:28px;z-index:70}
+  .modal.open{display:flex}
+  .modal-box{background:var(--panel);border:1px solid var(--border);border-radius:16px;
+    width:100%;max-width:1180px;max-height:92vh;overflow:auto;box-shadow:var(--shadow)}
+  .modal-box.narrow{max-width:760px}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);
+    position:sticky;top:0;background:var(--panel);z-index:2;font-weight:600}
+  .modal-head .x{margin-left:auto;cursor:pointer;color:var(--muted);font-size:1.3rem}
+  .modal-foot{display:flex;gap:10px;align-items:center;padding:12px 18px;border-top:1px solid var(--border);flex-wrap:wrap}
+  .modal .stage{aspect-ratio:16/9}
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;padding:18px}
+  .thumb{background:var(--panel2);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:.15s}
+  .thumb:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .thumb img{width:100%;height:130px;object-fit:cover;display:block;background:#000}
+  .thumb .cap{padding:7px 10px;font-size:.72rem;color:var(--muted)}
+  .thumb .cap b{color:var(--txt);display:block;font-size:.8rem;margin-bottom:2px}
+  .thumb .cap .hit{color:#fca5a5}
+  .meta-list{padding:14px 18px;font-size:.85rem;line-height:1.8}
+  .meta-list .k{color:var(--muted);display:inline-block;min-width:90px}
+  .empty.pad{padding:30px;text-align:center}
+
+  .panels{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}
+  @media(max-width:900px){.panels{grid-template-columns:1fr}}
+  .pcard{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+  .pcard h4{margin:0 0 10px;font-size:.85rem}
+  .evt{font-size:.78rem;padding:7px 0;border-bottom:1px dashed var(--border);display:flex;gap:8px}
+  .evt .t{color:var(--muted);white-space:nowrap}
+  .evt b{color:#fca5a5}
+  .ocr{font-size:.8rem;white-space:pre-wrap;color:var(--muted);max-height:220px;overflow:auto}
+  .muted{color:var(--muted)} .empty{color:var(--muted);font-size:.8rem;padding:8px 0}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);
+    border:1px solid var(--border);padding:10px 16px;border-radius:10px;font-size:.85rem;
+    box-shadow:var(--shadow);opacity:0;transition:.3s;z-index:60}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><span class="dot"></span>Object Detector <span class="ver" id="ver"></span></div>
+  <span class="pill off" id="azurePill"><span class="d"></span>Azure</span>
+  <div class="spacer"></div>
+  <div class="budget" title="Azure free-tier transactions used this month">
+    <div class="bar"><div class="fill" id="budgetFill"></div></div>
+    <small id="budgetTxt">budget –</small>
+  </div>
+  <button class="btn primary" id="analyzeAll">Analyze All</button>
+  <button class="btn" id="openCams">🎥 Cameras</button>
+  <button class="btn" id="openSnaps">🖼 Snapshots</button>
+  <button class="btn" id="openSettings">⚙ Settings</button>
+</header>
+
+<main>
+  <div class="grid" id="grid"></div>
+  <div class="panels">
+    <div class="pcard">
+      <h4>Detection Events <span class="muted" id="evtCount"></span></h4>
+      <div id="events"><div class="empty">Keyword watch off or no matches yet.</div></div>
+    </div>
+    <div class="pcard">
+      <h4>OCR / Read Text</h4>
+      <div class="ocr" id="ocr"><div class="empty">Enable the OCR feature, then analyze a frame.</div></div>
+    </div>
+  </div>
+</main>
+
+<div class="overlay" id="overlay"></div>
+<div class="drawer" id="drawer">
+  <h3>Settings <span class="x" id="closeSettings">✕</span></h3>
+
+  <div class="sect">
+    <h4>Inference Features</h4>
+    <div id="features"></div>
+    <div class="cost" id="costMeter"></div>
+  </div>
+
+  <div class="sect">
+    <h4>Detection Overlay</h4>
+    <div class="row"><label>Draw bounding boxes</label>
+      <span class="switch"><input type="checkbox" id="drawBoxes"><span class="slider"></span></span></div>
+    <div class="row"><label>Confidence ≥ <b id="confVal">0.50</b></label>
+      <input type="range" id="confidence" min="0" max="1" step="0.05" style="flex:1"></div>
+  </div>
+
+  <div class="sect">
+    <h4>Auto-Analyze</h4>
+    <div class="row"><label>Enable auto-analyze</label>
+      <span class="switch"><input type="checkbox" id="autoEnabled"><span class="slider"></span></span></div>
+    <div class="row"><label>Interval (seconds)</label>
+      <input type="number" id="autoInterval" min="30" step="10"></div>
+    <div class="cost" id="autoHint"></div>
+  </div>
+
+  <div class="sect">
+    <h4>Keyword / Tag Watch</h4>
+    <div class="row"><label>Enable watch</label>
+      <span class="switch"><input type="checkbox" id="kwEnabled"><span class="slider"></span></span></div>
+    <div class="row"><input type="text" class="wide" id="kwTerms" placeholder="person, dog, package (comma-separated)"></div>
+    <div class="row"><label>Sound alert</label>
+      <span class="switch"><input type="checkbox" id="kwSound"><span class="slider"></span></span></div>
+    <div class="row"><label>Desktop notification</label>
+      <span class="switch"><input type="checkbox" id="kwNotify"><span class="slider"></span></span></div>
+  </div>
+
+  <div class="sect">
+    <h4>Snapshots</h4>
+    <div class="row"><label>Save snapshots</label>
+      <span class="switch"><input type="checkbox" id="snapEnabled"><span class="slider"></span></span></div>
+    <div class="row"><label>Only on keyword match</label>
+      <span class="switch"><input type="checkbox" id="snapOnDet"><span class="slider"></span></span></div>
+  </div>
+
+  <div class="sect">
+    <h4>Azure</h4>
+    <div class="row"><label>API version</label>
+      <select id="apiVersion"><option value="v4">4.0 (modern)</option><option value="v3.2">3.2 (legacy)</option></select></div>
+    <div class="row"><label>Monthly budget (tx)</label>
+      <input type="number" id="monthlyBudget" min="0" step="100"></div>
+    <div class="row"><label>Budget mode</label>
+      <select id="budgetMode"><option value="soft">soft (warn)</option><option value="hard">hard (block)</option></select></div>
+  </div>
+
+  <div class="sect">
+    <button class="btn primary" id="saveSettings" style="width:100%">Save Settings</button>
+  </div>
+</div>
+
+<!-- Camera expand modal -->
+<div class="modal" id="camModal"><div class="modal-box">
+  <div class="modal-head"><span id="camModalName"></span>
+    <span class="pill off" id="camModalPill"><span class="d"></span><span class="t">offline</span></span>
+    <span class="x" id="camModalClose">✕</span></div>
+  <div class="stage">
+    <img id="camModalImg" alt=""><canvas id="camModalCanvas"></canvas>
+    <div class="caption" id="camModalCap"></div></div>
+  <div class="modal-foot">
+    <button class="btn primary" id="camModalAnalyze">Analyze</button>
+    <button class="btn" id="camModalSnap">📸 Snapshot</button>
+    <span class="ts" id="camModalTs" style="margin-left:auto;color:var(--muted);font-size:.72rem"></span>
+  </div>
+</div></div>
+
+<!-- Manage cameras modal -->
+<div class="modal" id="camsModal"><div class="modal-box narrow">
+  <div class="modal-head"><span>🎥 Manage Cameras</span><span class="x" id="camsClose">✕</span></div>
+  <div class="sect"><h4>Current Cameras</h4><div id="camsList"></div></div>
+  <div class="sect"><h4>Add a Camera</h4>
+    <div class="row"><label>Name</label><input type="text" id="newCamName" placeholder="e.g. Back Yard"></div>
+    <div class="row"><label>Type</label>
+      <select id="newCamType"><option value="rtsp">RTSP / network</option><option value="local">USB / local</option></select></div>
+    <div class="row" id="rtspRow"><input type="text" class="wide" id="newCamUrl" placeholder="rtsp://user:pass@host:554/stream"></div>
+    <div class="row" id="usbRow" style="display:none">
+      <select id="newCamDevice" style="flex:1"><option value="">— scan for devices —</option></select>
+      <button class="btn" id="scanUsb">🔍 Scan</button></div>
+    <div class="row"><button class="btn primary" id="addCamBtn" style="width:100%">Add Camera</button></div>
+    <div class="cost" id="addCamMsg"></div>
+  </div>
+</div></div>
+
+<!-- Snapshots gallery modal -->
+<div class="modal" id="snapsModal"><div class="modal-box">
+  <div class="modal-head"><span>🖼 Snapshots <span class="muted" id="snapsCount"></span></span>
+    <button class="btn" id="snapsRefresh">↻ Refresh</button>
+    <span class="x" id="snapsClose" style="margin-left:10px">✕</span></div>
+  <div class="gallery" id="gallery"></div>
+</div></div>
+
+<!-- Snapshot viewer modal -->
+<div class="modal" id="snapView"><div class="modal-box narrow">
+  <div class="modal-head"><span id="svName"></span><span class="x" id="svClose">✕</span></div>
+  <img id="svImg" style="width:100%;display:block;background:#000">
+  <div class="meta-list" id="svMeta"></div>
+  <div class="modal-foot"><a class="btn primary" id="svDownload" download>⬇ Download</a></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const FEATURE_LABELS = {tags:"Tags",objects:"Objects (boxes)",caption:"Caption",
+  people:"People (boxes)",dense:"Dense captions",ocr:"OCR / Read",
+  brands:"Brands (boxes)",color:"Color"};
+const FEATURE_HELP = {
+  tags:"General content labels for the whole scene (e.g. indoor, door, wall).",
+  objects:"Detects objects and draws a bounding box around each one.",
+  caption:"A one-sentence description of the whole scene.",
+  people:"Detects people and draws a box around each one.",
+  dense:"A separate caption for each region of the image (with boxes).",
+  ocr:"Reads text visible in the frame — signs, labels, plates, documents. Shows in the OCR panel.",
+  brands:"Detects commercial logos/brands (boxes). API 3.2 only.",
+  color:"Dominant/accent colors and B&W vs color. API 3.2 only."};
+const V32_ONLY = {brands:1, color:1};
+const BOX_COLORS = {objects:"#84cc16",people:"#22d3ee",brands:"#f59e0b",dense:"#a855f7"};
+// Bounding boxes are a point-in-time snapshot of one analyzed frame; the live feed
+// keeps moving, so a stale box must not linger. Hold it solid, then fade it out.
+const BOX_HOLD_MS = 5000;   // fully visible for this long after the box first appears
+const BOX_FADE_MS = 800;    // then fade to nothing over this window
+const BOX_LIFE_MS = BOX_HOLD_MS + BOX_FADE_MS;
+// Opacity for a box layer, given the client time it was first shown. A newer analysis
+// (manual Analyze or an auto-analyze tick) resets boxShownAt, so the old box is replaced.
+function boxAlpha(shownAt){
+  if(!shownAt)return 0;
+  const age=Date.now()-shownAt;
+  if(age<=BOX_HOLD_MS)return 1;
+  if(age>=BOX_LIFE_MS)return 0;
+  return 1-(age-BOX_HOLD_MS)/BOX_FADE_MS;
+}
+
+let STATE = null, CFG = null, CAPS = [], cards = {}, lastMatchTs = {};
+
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;
+  t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+
+async function jget(u){const r=await fetch(u);return r.json();}
+async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},
+  body:b?JSON.stringify(b):null});return r.json().catch(()=>({}));}
+
+// ---------- beep ----------
+let actx=null;
+function beep(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+  const o=actx.createOscillator(),g=actx.createGain();o.connect(g);g.connect(actx.destination);
+  o.type='sine';o.frequency.value=880;g.gain.setValueAtTime(.0001,actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(.3,actx.currentTime+.02);
+  g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+.4);
+  o.start();o.stop(actx.currentTime+.4);}catch(e){}}
+
+// ---------- build camera grid ----------
+function buildGrid(cams){
+  const grid=document.getElementById('grid');
+  cams.forEach(c=>{
+    if(cards[c.id])return;
+    const el=document.createElement('div');el.className='card';el.id='card-'+c.id;
+    el.innerHTML=`
+      <div class="top"><span class="name"></span>
+        <span class="pill off statpill"><span class="d"></span><span class="stxt">offline</span></span>
+        <span class="meta"></span></div>
+      <div class="stage">
+        <img src="/feed/${c.id}" alt="${c.name}">
+        <canvas></canvas>
+        <button class="iconbtn expand" title="Expand">⛶</button>
+        <div class="matchbadge">● MATCH</div>
+        <div class="caption"></div>
+      </div>
+      <div class="bottom">
+        <button class="btn analyzeBtn">Analyze</button>
+        <button class="btn snapBtn">📸</button>
+        <span class="ts">never analyzed</span>
+      </div>
+      <div class="tags"></div>`;
+    grid.appendChild(el);
+    el.querySelector('.name').textContent=c.name;
+    el.querySelector('.analyzeBtn').onclick=()=>analyzeOne(c.id);
+    el.querySelector('.snapBtn').onclick=()=>snap(c.id);
+    el.querySelector('.expand').onclick=()=>openCam(c.id);
+    cards[c.id]={el,cam:c};
+  });
+}
+
+async function analyzeOne(id){
+  const b=cards[id].el.querySelector('.analyzeBtn');b.disabled=true;b.textContent='…';
+  const r=await jpost('/api/analyze/'+id);
+  b.disabled=false;b.textContent='Analyze';
+  if(r.status!=='ok')toast('['+cards[id].cam.name+'] '+(r.message||'error'));
+  refreshAnalysis(id);refreshState();
+}
+async function snap(id){const r=await jpost('/api/snapshot/'+id);
+  toast(r.status==='ok'?'Snapshot saved: '+r.file:'Snapshot failed');}
+
+// ---------- draw boxes + caption ----------
+function refreshAnalysis(id){
+  jget('/api/analysis/'+id).then(a=>{
+    const c=cards[id];if(!c)return;const el=c.el;
+    // Stash the latest analysis and stamp when a *new* one first appears, so the
+    // box-render loop can fade it. A new _ts means a fresh analyze (manual or auto)
+    // arrived — restart the fade timer and let it supersede the previous box.
+    if(a && a._ts){
+      if(c.boxTs!==a._ts){c.boxTs=a._ts;c.boxShownAt=Date.now();}
+      c.analysis=a;
+    }else{c.analysis=null;c.boxTs=null;c.boxShownAt=0;}
+    if(!a||!a._ts){el.querySelector('.caption').textContent='';return;}
+    // caption
+    el.querySelector('.caption').textContent =
+      a.caption? `“${a.caption.text}” (${Math.round(a.caption.confidence*100)}%)` : '';
+    // ts
+    el.querySelector('.ts').textContent='analyzed '+timeago(a._ts*1000)+' · '+(a.tx||0)+' tx';
+    // (boxes are drawn + faded by the box-render loop below)
+    // tags + keyword hits
+    const matched=(a._matched||[]).map(s=>s.toLowerCase());
+    const tagsEl=el.querySelector('.tags');tagsEl.innerHTML='';
+    (a.tags||[]).filter(t=>t.confidence>=(CFG?CFG.confidence:0)).slice(0,14).forEach(t=>{
+      const s=document.createElement('span');s.className='tag'+(matched.includes(t.name.toLowerCase())?' hit':'');
+      s.textContent=`${t.name} ${Math.round(t.confidence*100)}%`;tagsEl.appendChild(s);});
+    // match alert
+    const badge=el.querySelector('.matchbadge');
+    if(a._matched&&a._matched.length){
+      badge.style.display='block';badge.textContent='● '+a._matched.join(', ');
+      el.classList.add('alert');
+      if(a._ts>(lastMatchTs[id]||0)){
+        lastMatchTs[id]=a._ts;
+        if(CFG&&CFG.keyword.sound)beep();
+        if(CFG&&CFG.keyword.notify&&Notification.permission==='granted')
+          new Notification('Detection: '+c.cam.name,{body:a._matched.join(', ')});
+      }
+    }else{badge.style.display='none';el.classList.remove('alert');}
+  });
+}
+function drawSet(ctx,items,color,thr,labelFn){
+  (items||[]).forEach(it=>{
+    const conf=it.confidence==null?1:it.confidence;if(conf<thr)return;
+    const b=it.box;if(!b)return;
+    ctx.lineWidth=3;ctx.strokeStyle=color;ctx.strokeRect(b.x,b.y,b.w,b.h);
+    const lab=`${labelFn(it)} ${Math.round(conf*100)}%`;
+    ctx.font='16px Segoe UI';const w=ctx.measureText(lab).width+10;
+    ctx.fillStyle=color;ctx.fillRect(b.x,Math.max(0,b.y-22),w,22);
+    ctx.fillStyle='#0d1117';ctx.fillText(lab,b.x+5,Math.max(14,b.y-6));
+  });
+}
+// Paint every box layer of an analysis onto a canvas at the given opacity.
+function paintBoxes(ctx,a,alpha){
+  const thr=CFG.confidence||0;
+  ctx.save();ctx.globalAlpha=alpha;
+  drawSet(ctx,a.objects,BOX_COLORS.objects,thr,o=>o.name);
+  drawSet(ctx,a.people,BOX_COLORS.people,thr,()=>'person');
+  drawSet(ctx,a.brands,BOX_COLORS.brands,thr,o=>o.name);
+  drawSet(ctx,a.dense,BOX_COLORS.dense,thr,o=>o.text);
+  ctx.restore();
+}
+// One render tick: redraw the box overlay for each card (and the open modal),
+// applying the time-based fade. Cleared automatically once a box ages past BOX_LIFE_MS
+// or a newer analysis resets boxShownAt.
+function renderBoxLoop(){
+  Object.keys(cards).forEach(id=>{
+    const c=cards[id];if(!c)return;
+    const canvas=c.el.querySelector('canvas');const ctx=canvas.getContext('2d');
+    if(canvas.width!==1280){canvas.width=1280;canvas.height=720;}
+    ctx.clearRect(0,0,1280,720);
+    if(!CFG||!CFG.draw_boxes||!c.analysis||!c.analysis._ts)return;
+    const al=boxAlpha(c.boxShownAt);if(al<=0)return;
+    paintBoxes(ctx,c.analysis,al);
+  });
+  if(modalCamId){
+    const c=cards[modalCamId];
+    const canvas=document.getElementById('camModalCanvas');const ctx=canvas.getContext('2d');
+    if(canvas.width!==1280){canvas.width=1280;canvas.height=720;}
+    ctx.clearRect(0,0,1280,720);
+    if(c&&CFG&&CFG.draw_boxes&&c.analysis&&c.analysis._ts){
+      const al=boxAlpha(c.boxShownAt);if(al>0)paintBoxes(ctx,c.analysis,al);
+    }
+  }
+}
+// ---------- state / budget ----------
+async function refreshState(){
+  const s=await jget('/api/state');STATE=s;CFG=s.config;CAPS=s.capabilities;
+  document.getElementById('ver').textContent='v'+s.version;
+  const ap=document.getElementById('azurePill');
+  ap.className='pill '+(s.azure_configured?'on':'off');
+  ap.querySelector('.d').nextSibling.textContent=s.azure_configured?'Azure '+CFG.azure.api_version:'Azure (no creds)';
+  // budget
+  const used=s.budget.count,max=CFG.azure.monthly_budget||1;
+  const pct=Math.min(100,Math.round(used/max*100));
+  document.getElementById('budgetFill').style.width=pct+'%';
+  document.getElementById('budgetTxt').textContent=`${used} / ${max} tx this month`+
+    (s.cooldown>0?` · rate-limited ${s.cooldown}s`:'');
+  buildGrid(s.cameras);
+  // prune cards for removed cameras
+  const liveIds=new Set(s.cameras.map(c=>c.id));
+  Object.keys(cards).forEach(id=>{if(!liveIds.has(id)){cards[id].el.remove();delete cards[id];}});
+  s.cameras.forEach(c=>{
+    const card=cards[c.id];if(!card)return;
+    const p=card.el.querySelector('.statpill');
+    p.className='pill statpill '+(c.connected?'on':'off');
+    p.querySelector('.stxt').textContent=c.connected?'live':'offline';
+    card.el.querySelector('.meta').textContent=c.connected?(c.fps+' fps'):'';
+  });
+  if(!document.getElementById('drawer').classList.contains('open'))syncForm();
+}
+
+// ---------- settings form ----------
+function syncForm(){
+  if(!CFG)return;
+  // features
+  const fc=document.getElementById('features');fc.innerHTML='';
+  STATE.all_features.forEach(f=>{
+    const supported=CAPS.includes(f);
+    const na=V32_ONLY[f]?'(needs API 3.2)':'(n/a)';
+    const row=document.createElement('div');row.className='row';
+    row.innerHTML=`<label title="${FEATURE_HELP[f]||''}">${FEATURE_LABELS[f]}${supported?'':' <span class="muted">'+na+'</span>'}</label>
+      <span class="switch"><input type="checkbox" data-feat="${f}" ${CFG.features[f]?'checked':''} ${supported?'':'disabled'}><span class="slider"></span></span>`;
+    fc.appendChild(row);
+  });
+  fc.querySelectorAll('input[data-feat]').forEach(i=>i.onchange=updateCost);
+  setChk('drawBoxes',CFG.draw_boxes);
+  document.getElementById('confidence').value=CFG.confidence;
+  document.getElementById('confVal').textContent=(+CFG.confidence).toFixed(2);
+  setChk('autoEnabled',CFG.auto.enabled);
+  document.getElementById('autoInterval').value=CFG.auto.interval;
+  setChk('kwEnabled',CFG.keyword.enabled);
+  document.getElementById('kwTerms').value=(CFG.keyword.terms||[]).join(', ');
+  setChk('kwSound',CFG.keyword.sound);setChk('kwNotify',CFG.keyword.notify);
+  setChk('snapEnabled',CFG.snapshots.enabled);setChk('snapOnDet',CFG.snapshots.on_detection);
+  document.getElementById('apiVersion').value=CFG.azure.api_version;
+  document.getElementById('monthlyBudget').value=CFG.azure.monthly_budget;
+  document.getElementById('budgetMode').value=CFG.azure.budget_mode;
+  updateCost();
+}
+function setChk(id,v){document.getElementById(id).checked=!!v;}
+function curFeatures(){const o={};document.querySelectorAll('input[data-feat]').forEach(i=>o[i.dataset.feat]=i.checked);return o;}
+function updateCost(){
+  const f=curFeatures();const n=CAPS.filter(k=>f[k]).length;
+  const free=5000,perMonth=n>0?Math.floor(free/n):0;
+  document.getElementById('costMeter').innerHTML= n===0
+    ? 'No supported features selected — analysis disabled.'
+    : `<b>${n}</b> transaction(s) per analyze call → about <b>${perMonth.toLocaleString()}</b> free frames/month (F0 cap 5,000 tx).`;
+  // auto interval safe hint
+  const cams=(STATE?STATE.cameras.filter(c=>c.enabled).length:1)||1;
+  const budget=+document.getElementById('monthlyBudget').value||4500;
+  const safe=n>0?Math.ceil(2592000*n*cams/budget):0;
+  document.getElementById('autoHint').innerHTML=n>0
+    ? `Safe interval for ${cams} camera(s) × ${n} feature(s) to stay under ${budget} tx/mo: <b>≥ ${safe}s</b>.`
+    : '';
+}
+
+async function saveSettings(){
+  const body={
+    features:curFeatures(),
+    draw_boxes:document.getElementById('drawBoxes').checked,
+    confidence:parseFloat(document.getElementById('confidence').value),
+    auto:{enabled:document.getElementById('autoEnabled').checked,
+          interval:parseInt(document.getElementById('autoInterval').value)||300},
+    keyword:{enabled:document.getElementById('kwEnabled').checked,
+             terms:document.getElementById('kwTerms').value.split(',').map(s=>s.trim()).filter(Boolean),
+             sound:document.getElementById('kwSound').checked,
+             notify:document.getElementById('kwNotify').checked},
+    snapshots:{enabled:document.getElementById('snapEnabled').checked,
+               on_detection:document.getElementById('snapOnDet').checked},
+    azure:{api_version:document.getElementById('apiVersion').value,
+           monthly_budget:parseInt(document.getElementById('monthlyBudget').value)||4500,
+           budget_mode:document.getElementById('budgetMode').value}
+  };
+  if(body.keyword.notify&&Notification.permission!=='granted')Notification.requestPermission();
+  const r=await jpost('/api/config',body);
+  if(r.status==='ok'){toast('Settings saved');CFG=r.config;closeDrawer();refreshState();}
+  else toast('Save failed');
+}
+
+// ---------- events + ocr panels ----------
+async function refreshEvents(){
+  const ev=await jget('/api/events');
+  const box=document.getElementById('events');
+  document.getElementById('evtCount').textContent=ev.length?`(${ev.length})`:'';
+  if(!ev.length){box.innerHTML='<div class="empty">Keyword watch off or no matches yet.</div>';return;}
+  box.innerHTML='';
+  ev.slice(0,40).forEach(e=>{
+    const d=document.createElement('div');d.className='evt';
+    d.innerHTML=`<span class="t">${new Date(e.ts*1000).toLocaleTimeString()}</span>
+      <span>${e.cam_name}: <b>${e.terms.join(', ')}</b>${e.snapshot?` <a href="/snapshots/${e.snapshot}" target="_blank">📸</a>`:''}</span>`;
+    box.appendChild(d);
+  });
+}
+async function refreshOcr(){
+  const parts=[];
+  for(const id of Object.keys(cards)){
+    const a=await jget('/api/analysis/'+id);
+    if(a&&a.ocr&&a.ocr.text)parts.push(`# ${cards[id].cam.name}\n${a.ocr.text}`);
+  }
+  const box=document.getElementById('ocr');
+  if(parts.length){box.textContent=parts.join('\n\n');}
+  else if(CFG&&CFG.features&&CFG.features.ocr){
+    box.innerHTML='<div class="empty">OCR is ON, but no text was found in the latest analyzed frame(s). Point a camera at text (a sign, label, plate, or document) and click Analyze.</div>';}
+  else{
+    box.innerHTML='<div class="empty">Reads text from the camera (signs, labels, plates, documents). Enable “OCR / Read” in Settings → Inference Features, then Analyze a frame.</div>';}
+}
+
+// ---------- drawer ----------
+function openDrawer(){syncForm();document.getElementById('drawer').classList.add('open');
+  document.getElementById('overlay').classList.add('open');}
+function closeDrawer(){document.getElementById('drawer').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');}
+
+function timeago(ms){const s=Math.floor((Date.now()-ms)/1000);
+  if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';return Math.floor(s/3600)+'h ago';}
+
+// ---------- toggle switches (delegated: span/label click -> toggle checkbox) ----------
+document.addEventListener('click',e=>{
+  const sw=e.target.closest('.switch');if(!sw)return;
+  const cb=sw.querySelector('input[type=checkbox]');
+  if(!cb||cb.disabled||e.target===cb)return;
+  cb.checked=!cb.checked;cb.dispatchEvent(new Event('change'));
+});
+
+// ---------- camera expand modal ----------
+let modalCamId=null, modalTimer=null;
+function openCam(id){
+  modalCamId=id;
+  document.getElementById('camModalName').textContent=cards[id]?cards[id].cam.name:id;
+  document.getElementById('camModalImg').src='/feed/'+id;
+  document.getElementById('camModal').classList.add('open');
+  drawCamModal();
+  modalTimer=setInterval(drawCamModal,1500);
+}
+function closeCam(){
+  if(modalTimer)clearInterval(modalTimer);modalTimer=null;modalCamId=null;
+  document.getElementById('camModalImg').src='';
+  document.getElementById('camModal').classList.remove('open');
+}
+async function drawCamModal(){
+  const id=modalCamId;if(!id)return;
+  const cam=STATE?STATE.cameras.find(c=>c.id===id):null;
+  const pill=document.getElementById('camModalPill');
+  if(cam){pill.className='pill '+(cam.connected?'on':'off');
+    pill.querySelector('.t').textContent=cam.connected?('live · '+cam.fps+' fps'):'offline';}
+  const a=await jget('/api/analysis/'+id);
+  document.getElementById('camModalCap').textContent=
+    a&&a.caption?`“${a.caption.text}” (${Math.round(a.caption.confidence*100)}%)`:'';
+  document.getElementById('camModalTs').textContent=
+    a&&a._ts?('analyzed '+timeago(a._ts*1000)+' · '+(a.tx||0)+' tx'):'';
+  // Box overlay (with fade) is painted by renderBoxLoop on camModalCanvas.
+}
+
+// ---------- snapshots gallery ----------
+function fmtTime(ts){return new Date(ts*1000).toLocaleString();}
+async function loadGallery(){
+  const items=await jget('/api/snapshots');
+  const g=document.getElementById('gallery');
+  document.getElementById('snapsCount').textContent=items.length?`(${items.length})`:'';
+  if(!items.length){g.innerHTML='<div class="empty pad">No snapshots yet. Use the 📸 button on a camera, or enable snapshots in Settings.</div>';return;}
+  g.innerHTML='';
+  items.forEach(it=>{
+    const m=it.meta||{};const ts=m.ts||it.mtime;
+    const hit=(m.terms&&m.terms.length)?`<span class="hit">● ${m.terms.join(', ')}</span>`:'';
+    const d=document.createElement('div');d.className='thumb';
+    d.innerHTML=`<img src="${it.url}" loading="lazy"><div class="cap"><b>${m.cam_name||it.file}</b>${fmtTime(ts)} ${hit}</div>`;
+    d.onclick=()=>openSnapView(it);
+    g.appendChild(d);
+  });
+}
+function openSnapView(it){
+  const m=it.meta||{};const ts=m.ts||it.mtime;
+  document.getElementById('svName').textContent=(m.cam_name||'Snapshot')+' · '+fmtTime(ts);
+  document.getElementById('svImg').src=it.url;
+  const dl=document.getElementById('svDownload');dl.href=it.url;dl.setAttribute('download',it.file);
+  const rows=[['Camera',m.cam_name||'–'],['Time',fmtTime(ts)],
+    ['Matched',(m.terms&&m.terms.length)?m.terms.join(', '):'–'],
+    ['Caption',m.caption||'–'],['Objects',(m.objects&&m.objects.length)?m.objects.join(', '):'–'],
+    ['Tags',(m.tags&&m.tags.length)?m.tags.join(', '):'–'],
+    ['Size',(it.size/1024).toFixed(0)+' KB']];
+  document.getElementById('svMeta').innerHTML=rows.map(r=>`<div><span class="k">${r[0]}</span> ${r[1]}</div>`).join('');
+  document.getElementById('snapView').classList.add('open');
+}
+function openSnaps(){document.getElementById('snapsModal').classList.add('open');loadGallery();}
+
+// ---------- manage cameras ----------
+function openCams(){document.getElementById('camsModal').classList.add('open');loadCamsList();}
+async function loadCamsList(){
+  const cams=await jget('/api/cameras');
+  const box=document.getElementById('camsList');
+  if(!cams.length){box.innerHTML='<div class="empty">No cameras configured yet. Add one below.</div>';return;}
+  box.innerHTML='';
+  cams.forEach(c=>{
+    const where=c.type==='local'?(c.device||''):(c.url||'');
+    const d=document.createElement('div');d.className='row';
+    d.innerHTML=`<label><b>${c.name}</b> <span class="muted">· ${c.type} · ${where}</span></label>
+      <button class="btn delCam" data-id="${c.id}">Remove</button>`;
+    box.appendChild(d);
+  });
+  box.querySelectorAll('.delCam').forEach(b=>b.onclick=()=>removeCam(b.dataset.id));
+}
+async function removeCam(id){
+  if(!confirm('Remove this camera?'))return;
+  await fetch('/api/cameras/'+id,{method:'DELETE'});
+  toast('Camera removed');loadCamsList();refreshState();
+}
+async function scanUsb(){
+  const sel=document.getElementById('newCamDevice');
+  sel.innerHTML='<option value="">scanning…</option>';
+  const devs=await jget('/api/discover_usb');
+  if(!devs.length){sel.innerHTML='<option value="">no USB cameras found</option>';return;}
+  sel.innerHTML=devs.map(d=>`<option value="${d.device}">${d.name} (${d.device})</option>`).join('');
+}
+async function addCam(){
+  const type=document.getElementById('newCamType').value;
+  const body={name:document.getElementById('newCamName').value.trim(),type};
+  if(type==='local'){body.device=document.getElementById('newCamDevice').value;
+    if(!body.device){document.getElementById('addCamMsg').textContent='Pick a USB device (Scan first).';return;}}
+  else{body.url=document.getElementById('newCamUrl').value.trim();
+    if(!body.url){document.getElementById('addCamMsg').textContent='Enter an RTSP URL.';return;}}
+  const r=await jpost('/api/cameras',body);
+  if(r.status==='ok'){document.getElementById('addCamMsg').textContent='';
+    document.getElementById('newCamName').value='';document.getElementById('newCamUrl').value='';
+    toast('Camera added: '+r.camera.name);loadCamsList();refreshState();}
+  else document.getElementById('addCamMsg').textContent=r.message||'Add failed';
+}
+
+// close-on-backdrop for all modals
+['camModal','snapsModal','snapView','camsModal'].forEach(id=>{
+  document.getElementById(id).onclick=e=>{if(e.target.id===id){
+    if(id==='camModal')closeCam();else document.getElementById(id).classList.remove('open');}};
+});
+document.getElementById('openCams').onclick=openCams;
+document.getElementById('camsClose').onclick=()=>document.getElementById('camsModal').classList.remove('open');
+document.getElementById('scanUsb').onclick=scanUsb;
+document.getElementById('addCamBtn').onclick=addCam;
+document.getElementById('newCamType').onchange=e=>{
+  const usb=e.target.value==='local';
+  document.getElementById('usbRow').style.display=usb?'flex':'none';
+  document.getElementById('rtspRow').style.display=usb?'none':'flex';
+};
+document.getElementById('camModalClose').onclick=closeCam;
+document.getElementById('camModalAnalyze').onclick=async()=>{await analyzeOne(modalCamId);drawCamModal();};
+document.getElementById('camModalSnap').onclick=()=>snap(modalCamId);
+document.getElementById('openSnaps').onclick=openSnaps;
+document.getElementById('snapsClose').onclick=()=>document.getElementById('snapsModal').classList.remove('open');
+document.getElementById('snapsRefresh').onclick=loadGallery;
+document.getElementById('svClose').onclick=()=>document.getElementById('snapView').classList.remove('open');
+
+// ---------- wire up ----------
+document.getElementById('openSettings').onclick=openDrawer;
+document.getElementById('closeSettings').onclick=closeDrawer;
+document.getElementById('overlay').onclick=closeDrawer;
+document.getElementById('saveSettings').onclick=saveSettings;
+document.getElementById('analyzeAll').onclick=async()=>{toast('Analyzing all cameras…');
+  await jpost('/api/analyze_all');refreshState();Object.keys(cards).forEach(refreshAnalysis);};
+document.getElementById('confidence').oninput=e=>{
+  document.getElementById('confVal').textContent=(+e.target.value).toFixed(2);};
+['monthlyBudget','autoInterval'].forEach(id=>document.getElementById(id).oninput=updateCost);
+
+// loops
+refreshState();
+setInterval(refreshState,4000);
+setInterval(()=>Object.keys(cards).forEach(refreshAnalysis),2000);
+setInterval(refreshEvents,4000);
+setInterval(refreshOcr,4000);
+setInterval(renderBoxLoop,100);   // smooth box fade / auto-clear (~10 fps)
+</script>
+</body>
+</html>
