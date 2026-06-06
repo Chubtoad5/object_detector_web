@@ -60,6 +60,7 @@ PURGE="${PURGE:-false}"                                 # uninstall: also delete
 # --- Air-gap ---
 OFFLINE_SENTINEL="${OFFLINE_SENTINEL:-od-save.tar.gz}"  # presence next to deploy.sh => offline install
 INSTALL_PKGS_URL="${INSTALL_PKGS_URL:-https://raw.githubusercontent.com/Chubtoad5/install-packages/main/install_packages.sh}"
+LICENSE_OFFER_CONTACT="${LICENSE_OFFER_CONTACT:-the Chubtoad5 project via https://github.com/Chubtoad5}"  # contact named in the air-gap bundle's GPL written offer
 AIR_GAPPED_MODE=0
 OFFLINE_DIR=""
 
@@ -518,6 +519,49 @@ ensure_save_tools(){
   esac
 }
 
+# Write a LICENSES/ dir into the air-gap bundle ($1 = stage dir): a third-party manifest
+# plus a GPL/LGPL written offer for the bundled OS-distribution packages (notably ffmpeg,
+# which on Debian/Ubuntu is a GPL build). Source for distro packages is available from the
+# OS distribution's own source archives; the offer is the portable backstop.
+generate_bundle_licenses(){
+  local dir="$1/LICENSES"
+  mkdir -p "$dir"
+  cat > "$dir/THIRD_PARTY_NOTICES.txt" <<EOF
+Third-party components redistributed in this object_detector_web air-gap bundle
+Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+Caddy ${CADDY_VERSION} binary ............ Apache-2.0   https://github.com/caddyserver/caddy
+Python wheels: Flask (BSD-3), Gunicorn (MIT), gevent (MIT), OpenCV (Apache-2.0),
+  NumPy (BSD-3), Azure AI Vision SDKs (MIT) .. see each wheel's own metadata
+OS packages [$(os_pkg_list)]:
+  ffmpeg ................................. GPL-2.0+ (Debian/Ubuntu --enable-gpl build); see WRITTEN_OFFER.txt
+  libglib2.0-0 .......................... LGPL-2.1+
+  others (python3-venv/pip, libgl1) ..... permissive
+
+The Azure AI Vision service is proprietary Microsoft (called with your key; not
+redistributed). The installer and app are Apache-2.0 (Chubtoad5).
+EOF
+  cat > "$dir/WRITTEN_OFFER.txt" <<EOF
+WRITTEN OFFER FOR CORRESPONDING SOURCE CODE (GPL / LGPL)
+
+This air-gap bundle redistributes operating-system distribution packages, including
+ffmpeg (built under the GNU General Public License on Debian/Ubuntu) and glib (LGPL).
+
+The corresponding source for these distribution packages is available from the OS
+distribution's own source archives (e.g. 'apt-get source <package>', or the
+distribution's source mirrors for the exact version bundled). In accordance with GPLv2
+section 3 / GPLv3 section 6, the distributor of this bundle additionally offers, valid
+for three (3) years from the date this bundle was created ($(date -u +%Y-%m-%d)), to
+provide the corresponding source for these packages on a physical medium for no more
+than the cost of distribution.
+
+To request the source, contact: ${LICENSE_OFFER_CONTACT}
+
+This offer is independent of the Apache-2.0 license covering the installer and app.
+EOF
+  echo "  Wrote LICENSES/ (manifest + GPL/LGPL written offer for bundled OS packages)."
+}
+
 do_save(){
   require_root
   detect_distro
@@ -556,6 +600,8 @@ python: $(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])')
 caddy: ${CADDY_VERSION}
 os_packages: $(os_pkg_list)
 EOF
+
+  generate_bundle_licenses "$stage"
 
   step "Packing $OFFLINE_SENTINEL"
   tar czf "$SCRIPT_DIR/$OFFLINE_SENTINEL" -C "$stage" .
