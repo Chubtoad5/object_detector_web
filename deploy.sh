@@ -170,6 +170,7 @@ install_os_packages(){
     [ -f "$OFFLINE_DIR/install_packages.sh" ] && [ -f "$OFFLINE_DIR/offline-packages.tar.gz" ] \
       || die "offline bundle is missing OS packages (install_packages.sh / offline-packages.tar.gz)"
     chmod +x "$OFFLINE_DIR/install_packages.sh"
+    # shellcheck disable=SC2046 # one word per package
     ( cd "$OFFLINE_DIR" && ./install_packages.sh offline $(os_pkg_list) )
     if [ "${ENABLE_USB,,}" = "true" ]; then usb_verify_driver; fi
     return
@@ -577,6 +578,7 @@ do_save(){
     curl -fsSL "$INSTALL_PKGS_URL" -o "$stage/install_packages.sh" || die "could not fetch install_packages.sh"
   fi
   chmod +x "$stage/install_packages.sh"
+  # shellcheck disable=SC2046 # one word per package
   ( cd "$stage" && ./install_packages.sh save $(os_pkg_list) ) || die "OS package save failed"
 
   step "Downloading Python wheels"
@@ -689,6 +691,11 @@ EOF
 }
 
 # ----------------------------------------------------------------- dispatch
+# When sourced by a test harness, stop here: only the functions above are wanted.
+if [[ "${BASH_SOURCE[0]:-$0}" != "$0" ]]; then
+  return 0
+fi
+
 CMD="${1:-install}"
 case "$CMD" in
   install)   do_install ;;
