@@ -117,6 +117,30 @@ PY
   python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); assert c["confidence"]==0.7 and c["azure"]["budget_mode"]=="hard" and c["keyword"]["terms"]==["dog"], c' "$CFG"
 }
 
+@test "O7: booleans as Fabric renders them (True / False) are read correctly" {
+  printf '{"features":{"ocr":false,"objects":true},"draw_boxes":true}' > "$CFG"
+  PASSED_SETTINGS=" FEATURE_OCR FEATURE_OBJECTS DRAW_BOXES" FEATURE_OCR=True FEATURE_OBJECTS=False DRAW_BOXES=False
+  write_config_json >/dev/null 2>&1
+  python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); assert c["features"]=={"ocr":True,"objects":False} and c["draw_boxes"] is False, c' "$CFG"
+}
+
+@test "O1: a malformed passed setting fails before the app is touched, and leaves the file as it was" {
+  printf '{"confidence":0.7}' > "$CFG"
+  PASSED_SETTINGS=" CONFIDENCE" CONFIDENCE=abc
+  run write_config_json
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"A passed setting may be malformed"* ]]
+  [ "$(cat "$CFG")" = '{"confidence":0.7}' ]
+  [ ! -e "$CFG.new" ]
+}
+
+@test "O2: a cameras.json of the wrong shape is treated as empty" {
+  echo '{"cameras": null}' > "$CAMS"
+  RTSP_URL=rtsp://10.0.0.1/s
+  write_cameras_json >/dev/null
+  [ "$(ids)" = "cam1=rtsp://10.0.0.1/s" ]
+}
+
 @test "O7: settings passed at the top of the script are the ones recorded as passed" {
   run bash -c 'export AZURE_MONTHLY_BUDGET=12 CONFIDENCE=0.9; source "'"$BATS_TEST_DIRNAME"'/../../deploy.sh"; echo "[$PASSED_SETTINGS]"'
   [[ "$output" == *"CONFIDENCE"* && "$output" == *"AZURE_MONTHLY_BUDGET"* && "$output" != *"FEATURE_TAGS"* ]]
@@ -196,7 +220,7 @@ order_setup() {
   run do_install
   [ "$status" -eq 0 ]
   stop=$(grep -n 'systemctl stop' "$STUB_LOG" | head -1 | cut -d: -f1)
-  for step in install_os_packages install_caddy setup_venv write_caddyfile; do
+  for step in install_os_packages install_caddy setup_venv write_caddyfile write_cameras_json write_config_json; do
     [ "$(grep -n "^$step\$" "$STUB_LOG" | cut -d: -f1)" -lt "$stop" ]
   done
   [ "$(grep -n '^copy_app_files$' "$STUB_LOG" | cut -d: -f1)" -gt "$stop" ]

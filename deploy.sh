@@ -264,7 +264,7 @@ write_cameras_json(){
   export RTSP_URL ENABLE_USB CAMERAS_RESET
   for i in 1 2 3 4 5 6 7 8; do export "CAMERA_${i}_URL" "CAMERA_${i}_NAME" "CAMERA_${i}_TYPE" "CAMERA_${i}_DEVICE" 2>/dev/null || true; done
   local out="$APP_DIR/cameras.json.new"
-  python3 - "$APP_DIR/cameras.json" > "$out" <<'PYEOF'
+  python3 - "$APP_DIR/cameras.json" > "$out" <<'PYEOF' || { rm -f "$out"; die "couldn't build cameras.json (output above)."; }
 import os, sys, json
 env = lambda k: os.environ.get(k, "").strip()
 mine = []
@@ -298,7 +298,9 @@ if os.environ.get("CAMERAS_RESET", "false").lower() != "true":
     try:
         with open(sys.argv[1]) as f:
             old = json.load(f).get("cameras", [])
-    except (OSError, ValueError):
+        if not isinstance(old, list):
+            old = []
+    except (OSError, ValueError, AttributeError):
         old = []
     ids = {c["id"] for c in mine}
     kept = [c for c in old if isinstance(c, dict) and c.get("source") != "env" and c.get("id") not in ids]
@@ -313,7 +315,7 @@ write_config_json(){
   if [ -f "$cfg" ]; then step "Updating runtime config (state/config.json)"; else step "Writing default runtime config"; fi
   local name
   for name in $RUNTIME_SETTINGS PASSED_SETTINGS; do export "${name?}"; done
-  python3 - "$cfg" > "$cfg.new" <<'PYEOF'
+  python3 - "$cfg" > "$cfg.new" <<'PYEOF' || { rm -f "$cfg.new"; die "couldn't update state/config.json (output above). A passed setting may be malformed."; }
 import os, sys, json
 path = sys.argv[1]
 b = lambda k, d: os.environ.get(k, "true" if d else "false").lower() == "true"
@@ -608,10 +610,12 @@ do_install(){
   create_user_dirs
   setup_venv
   write_caddyfile
-  for svc in od-caddy od-web od-cameras; do systemctl stop "$svc" 2>/dev/null || true; done
-  copy_app_files
+  # Each of these writes its file to a .new and moves it into place only when it worked, so a bad value or a damaged
+  # file stops the run here, with the running app untouched.
   write_cameras_json
   write_config_json
+  for svc in od-caddy od-web od-cameras; do systemctl stop "$svc" 2>/dev/null || true; done
+  copy_app_files
   write_azure_env
   write_systemd
   mv -f /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
@@ -750,7 +754,7 @@ do_uninstall(){
     rm -f "/etc/systemd/system/$svc.service"
   done
   systemctl daemon-reload
-  rm -f /etc/caddy/Caddyfile; rmdir /etc/caddy 2>/dev/null || true
+  rm -f /etc/caddy/Caddyfile /etc/caddy/Caddyfile.new; rmdir /etc/caddy 2>/dev/null || true
   rm -f /usr/local/bin/caddy
   # clear any shared-memory frame buffers
   rm -f /dev/shm/od_frame_* 2>/dev/null || true
@@ -759,7 +763,7 @@ do_uninstall(){
     echo "  purged $APP_DIR + $PERSIST_DIR (snapshots + state + budget removed)"
   else
     rm -rf "$APP_DIR/venv" "$APP_DIR"/*.py "$APP_DIR/templates" "$APP_DIR/azure.env" \
-           "$APP_DIR/cameras.json" "$APP_DIR/.install-env" "$APP_DIR/requirements.txt" "$APP_DIR/web.sock"
+           "$APP_DIR/cameras.json" "$APP_DIR/cameras.json.new" "$APP_DIR/.install-env" "$APP_DIR/requirements.txt" "$APP_DIR/web.sock"
     echo "  removed app (kept $APP_DIR/state + snapshots + $PERSIST_DIR/budget.json; set PURGE=true to delete)"
   fi
   id "$APP_USER" >/dev/null 2>&1 && { userdel "$APP_USER" 2>/dev/null || true; echo "  removed user $APP_USER"; }
