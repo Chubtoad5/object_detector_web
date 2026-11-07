@@ -97,9 +97,10 @@ All are runtime-overridable: `sudo VAR=value ./deploy.sh`.
 | `AZURE_MONTHLY_BUDGET` | `4500` | Monthly transaction cap the guard enforces (F0 free cap is 5000). |
 | `AZURE_BUDGET_MODE` | `soft` | `soft` (warn) or `hard` (block at the cap). |
 | `RTSP_URL` | – | Convenience single RTSP camera. |
-| `CAMERA_<N>_URL` / `_NAME` / `_TYPE` / `_DEVICE` | – | Define up to 8 cameras (`N`=1..8; `_TYPE`=`rtsp`\|`local`). |
+| `CAMERA_<N>_URL` / `_NAME` / `_TYPE` / `_DEVICE` | – | Define up to 8 cameras (`N`=1..8; `_TYPE`=`rtsp`\|`local`). A local camera needs only `_DEVICE`. One with nothing usable is skipped with a warning. |
+| `CAMERAS_RESET` | `false` | `true` rebuilds `cameras.json` from the environment only, dropping cameras added in the UI. See [Cameras](#cameras). |
 | `ENABLE_USB` | `false` | Add a `/dev/video0` local camera and load `uvcvideo` (+ `linux-modules-extra`). |
-| `TLS_MODE` | `internal` | `none` (HTTP) \| `internal` (self-signed) \| `auto` (Let's Encrypt). |
+| `TLS_MODE` | `internal` | `none` (HTTP) \| `internal` (self-signed) \| `auto` (Let's Encrypt). `auto` needs `FQDN` set to a public name for this host, and refuses without it. |
 | `AUTH_MODE` | `basic` | `none` \| `basic`. |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / `changeme` | Basic-auth credentials. **Change the password.** |
 | `TCP_PORT` | `443` (or `80` if `TLS_MODE=none`) | Listen port. |
@@ -121,6 +122,28 @@ Define cameras at install via `RTSP_URL` or `CAMERA_<N>_*`, or manage them live 
 
 - **RTSP/network** — paste an `rtsp://…` URL.
 - **USB/local** — **Scan** auto-discovers `/dev/video*` devices (needs `ENABLE_USB=true` at install so `uvcvideo` is loaded).
+
+**Re-running `deploy.sh` keeps the cameras you added in the UI.** Cameras the environment defines are marked
+`"source": "env"` in `cameras.json`. On every run they are replaced by what the environment defines then, and every
+other camera stays:
+
+- Clearing `RTSP_URL`, or setting `ENABLE_USB=false`, removes that camera, as before.
+- If a UI camera and an environment camera have the same id (`cam1`, `cam2`… or `usb0`), the environment's wins.
+- A camera you delete in the UI comes back on the next run if the environment still defines it.
+- `CAMERAS_RESET=true` rebuilds the file from the environment only, as releases before 1.1.0 did on every run.
+- A `cameras.json` from before 1.1.0 has no `source` field, so its environment cameras look like UI ones. Its `cam1`
+  and `usb0` are replaced as usual, because the environment uses those ids. If the first run after upgrading also
+  clears `RTSP_URL`, the old `cam1` stays: delete it in the UI, or use `CAMERAS_RESET=true`.
+
+A full `uninstall` still removes `cameras.json`, UI cameras included.
+
+### Runtime settings on a re-run
+
+`state/config.json` holds the inference and Azure settings (`FEATURE_*`, `DRAW_BOXES`, `CONFIDENCE`, `AUTO_*`,
+`KEYWORD_*`, `SNAPSHOTS*`, `AZURE_API_VERSION`, `AZURE_MONTHLY_BUDGET`, `AZURE_BUDGET_MODE`), which the UI can change too.
+A first install writes them all. **A re-run applies the ones you pass, and keeps the rest:** a setting you don't pass
+keeps its value, including a change made in the UI. A setting you pass replaces it, and the run names what it changed.
+The banner shows the values the file holds, which are the ones the app uses.
 
 > **USB cameras inside a VM:** raw hypervisor USB passthrough often cannot stream a webcam's
 > isochronous video into a guest. If a passed-through camera enumerates but never delivers

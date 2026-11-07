@@ -42,7 +42,7 @@ BUDGET_FILE = os.path.join(PERSIST_DIR, "budget.json")
 STATUS_FILE = os.path.join(STATE_DIR, "cameras_status.json")
 
 FRAME_W, FRAME_H, FRAME_C = 1280, 720, 3
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.1.0"
 
 app = Flask(__name__)
 
