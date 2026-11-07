@@ -6,7 +6,16 @@
 #   All variables below are runtime-overridable:  sudo VAR=value ./deploy.sh
 # =============================================================================
 set -e
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="1.1.0"
+
+# The runtime settings state/config.json holds. Recorded before the defaults below fill them in: on a re-run, one the
+# caller passed replaces the kept value, and one it didn't pass keeps whatever the file (or the UI) has.
+RUNTIME_SETTINGS="FEATURE_TAGS FEATURE_OBJECTS FEATURE_CAPTION FEATURE_PEOPLE FEATURE_DENSE FEATURE_OCR FEATURE_BRANDS FEATURE_COLOR DRAW_BOXES CONFIDENCE AUTO_ANALYZE AUTO_INTERVAL KEYWORD_WATCH KEYWORD_TERMS KEYWORD_SOUND KEYWORD_NOTIFY SNAPSHOTS SNAPSHOTS_ON_DETECTION AZURE_API_VERSION AZURE_MONTHLY_BUDGET AZURE_BUDGET_MODE"
+PASSED_SETTINGS=""
+for _setting in $RUNTIME_SETTINGS; do
+  [ -n "${!_setting:-}" ] && PASSED_SETTINGS="$PASSED_SETTINGS $_setting"
+done
+FQDN_GIVEN="${FQDN:-}"
 
 # ----------------------------------------------------------------- config
 # --- Azure Computer Vision (Image Analysis) ---
@@ -20,6 +29,7 @@ AZURE_BUDGET_MODE="${AZURE_BUDGET_MODE:-soft}"          # soft (warn) | hard (bl
 RTSP_URL="${RTSP_URL:-}"
 ENABLE_USB="${ENABLE_USB:-false}"                       # true => add a /dev/video0 local camera
 USB_KERNEL_TRACK="${USB_KERNEL_TRACK:-true}"            # ENABLE_USB only: keep uvcvideo across kernel upgrades
+CAMERAS_RESET="${CAMERAS_RESET:-false}"                 # true => cameras.json is rebuilt from the environment only, dropping cameras added in the UI
 
 # --- Web / TLS / auth ---
 TLS_MODE="${TLS_MODE:-internal}"                        # none | internal (self-signed) | auto (LE)
@@ -251,67 +261,138 @@ copy_app_files(){
 
 write_cameras_json(){
   step "Writing cameras.json"
-  export RTSP_URL ENABLE_USB
+  export RTSP_URL ENABLE_USB CAMERAS_RESET
   for i in 1 2 3 4 5 6 7 8; do export "CAMERA_${i}_URL" "CAMERA_${i}_NAME" "CAMERA_${i}_TYPE" "CAMERA_${i}_DEVICE" 2>/dev/null || true; done
-  python3 - <<'PYEOF' > "$APP_DIR/cameras.json"
-import os, json
-cams=[]
-def add(cid,name,ctype,url=None,device=None,enabled=True):
-    c={"id":cid,"name":name,"type":ctype,"enabled":enabled}
-    if url: c["url"]=url
-    if device: c["device"]=device
-    cams.append(c)
-explicit=False
-for i in range(1,9):
-    u=os.environ.get("CAMERA_%d_URL"%i,"").strip()
-    if u:
-        explicit=True
-        add("cam%d"%i, os.environ.get("CAMERA_%d_NAME"%i,"Camera %d"%i),
-            os.environ.get("CAMERA_%d_TYPE"%i,"rtsp"), url=u,
-            device=os.environ.get("CAMERA_%d_DEVICE"%i))
-rtsp=os.environ.get("RTSP_URL","").strip()
-if rtsp and not explicit and not rtsp.startswith("rtsp://192.168.1.250"):
-    add("cam1","RTSP Camera","rtsp",url=rtsp)
-if os.environ.get("ENABLE_USB","false").lower()=="true":
-    add("usb0","USB Camera","local",device="/dev/video0")
-print(json.dumps({"cameras":cams}, indent=2))
+  local out="$APP_DIR/cameras.json.new"
+  python3 - "$APP_DIR/cameras.json" > "$out" <<'PYEOF'
+import os, sys, json
+env = lambda k: os.environ.get(k, "").strip()
+mine = []
+def add(cid, name, ctype, url=None, device=None):
+    c = {"id": cid, "name": name, "type": ctype, "enabled": True, "source": "env"}
+    if url: c["url"] = url
+    if device: c["device"] = device
+    mine.append(c)
+explicit = False
+for i in range(1, 9):
+    u, d = env("CAMERA_%d_URL" % i), env("CAMERA_%d_DEVICE" % i)
+    t = env("CAMERA_%d_TYPE" % i) or ("local" if d and not u else "rtsp")
+    if not (u or d):
+        if env("CAMERA_%d_TYPE" % i) or env("CAMERA_%d_NAME" % i):
+            print("  WARNING: CAMERA_%d is set, but has no CAMERA_%d_URL or CAMERA_%d_DEVICE, so it is skipped." % (i, i, i), file=sys.stderr)
+        continue
+    if t == "rtsp" and not u:
+        print("  WARNING: CAMERA_%d_TYPE=rtsp needs CAMERA_%d_URL, so it is skipped." % (i, i), file=sys.stderr)
+        continue
+    explicit = True
+    add("cam%d" % i, env("CAMERA_%d_NAME" % i) or "Camera %d" % i, t, url=u or None, device=d or None)
+rtsp = env("RTSP_URL")
+if rtsp and not explicit:
+    add("cam1", "RTSP Camera", "rtsp", url=rtsp)
+if os.environ.get("ENABLE_USB", "false").lower() == "true":
+    add("usb0", "USB Camera", "local", device="/dev/video0")
+# A re-run keeps the cameras added in the UI. The environment's own cameras (source "env") are replaced by what it
+# defines now, so clearing RTSP_URL still removes its camera, and on an id clash the environment wins.
+kept = []
+if os.environ.get("CAMERAS_RESET", "false").lower() != "true":
+    try:
+        with open(sys.argv[1]) as f:
+            old = json.load(f).get("cameras", [])
+    except (OSError, ValueError):
+        old = []
+    ids = {c["id"] for c in mine}
+    kept = [c for c in old if isinstance(c, dict) and c.get("source") != "env" and c.get("id") not in ids]
+print(json.dumps({"cameras": mine + kept}, indent=2))
 PYEOF
+  mv -f "$out" "$APP_DIR/cameras.json"
   echo "  $(python3 -c 'import json;print(len(json.load(open("'"$APP_DIR"'/cameras.json"))["cameras"]))') camera(s) configured"
 }
 
 write_config_json(){
-  if [ -f "$APP_DIR/state/config.json" ]; then
-    echo "  preserving existing runtime config (state/config.json)"
-    return
-  fi
-  step "Writing default runtime config"
-  export FEATURE_TAGS FEATURE_OBJECTS FEATURE_CAPTION FEATURE_PEOPLE FEATURE_DENSE \
-         FEATURE_OCR FEATURE_BRANDS FEATURE_COLOR DRAW_BOXES CONFIDENCE AUTO_ANALYZE \
-         AUTO_INTERVAL KEYWORD_WATCH KEYWORD_TERMS KEYWORD_SOUND KEYWORD_NOTIFY \
-         SNAPSHOTS SNAPSHOTS_ON_DETECTION AZURE_API_VERSION AZURE_MONTHLY_BUDGET AZURE_BUDGET_MODE
-  python3 - <<'PYEOF' > "$APP_DIR/state/config.json"
-import os, json
-b=lambda k,d: os.environ.get(k, "true" if d else "false").lower()=="true"
-terms=[t.strip() for t in os.environ.get("KEYWORD_TERMS","").split(",") if t.strip()]
-cfg={
- "features":{"tags":b("FEATURE_TAGS",1),"objects":b("FEATURE_OBJECTS",1),
-   "caption":b("FEATURE_CAPTION",1),"people":b("FEATURE_PEOPLE",0),
-   "dense":b("FEATURE_DENSE",0),"ocr":b("FEATURE_OCR",0),
-   "brands":b("FEATURE_BRANDS",0),"color":b("FEATURE_COLOR",0)},
- "draw_boxes":b("DRAW_BOXES",1),
- "confidence":float(os.environ.get("CONFIDENCE","0.5")),
- "auto":{"enabled":b("AUTO_ANALYZE",0),"interval":int(os.environ.get("AUTO_INTERVAL","300"))},
- "keyword":{"enabled":b("KEYWORD_WATCH",0),"terms":terms,
-   "sound":b("KEYWORD_SOUND",1),"notify":b("KEYWORD_NOTIFY",0)},
- "snapshots":{"enabled":b("SNAPSHOTS",0),"on_detection":b("SNAPSHOTS_ON_DETECTION",0)},
- "ocr_panel":True,
- "events":{"enabled":True,"max":100},
- "azure":{"api_version":os.environ.get("AZURE_API_VERSION","v4"),
-   "monthly_budget":int(os.environ.get("AZURE_MONTHLY_BUDGET","4500")),
-   "budget_mode":os.environ.get("AZURE_BUDGET_MODE","soft")},
+  local cfg="$APP_DIR/state/config.json"
+  if [ -f "$cfg" ]; then step "Updating runtime config (state/config.json)"; else step "Writing default runtime config"; fi
+  local name
+  for name in $RUNTIME_SETTINGS PASSED_SETTINGS; do export "${name?}"; done
+  python3 - "$cfg" > "$cfg.new" <<'PYEOF'
+import os, sys, json
+path = sys.argv[1]
+b = lambda k, d: os.environ.get(k, "true" if d else "false").lower() == "true"
+terms = lambda: [t.strip() for t in os.environ.get("KEYWORD_TERMS", "").split(",") if t.strip()]
+# setting: (place in config.json, value from the environment)
+settings = {
+ "FEATURE_TAGS": (("features", "tags"), lambda: b("FEATURE_TAGS", 1)),
+ "FEATURE_OBJECTS": (("features", "objects"), lambda: b("FEATURE_OBJECTS", 1)),
+ "FEATURE_CAPTION": (("features", "caption"), lambda: b("FEATURE_CAPTION", 1)),
+ "FEATURE_PEOPLE": (("features", "people"), lambda: b("FEATURE_PEOPLE", 0)),
+ "FEATURE_DENSE": (("features", "dense"), lambda: b("FEATURE_DENSE", 0)),
+ "FEATURE_OCR": (("features", "ocr"), lambda: b("FEATURE_OCR", 0)),
+ "FEATURE_BRANDS": (("features", "brands"), lambda: b("FEATURE_BRANDS", 0)),
+ "FEATURE_COLOR": (("features", "color"), lambda: b("FEATURE_COLOR", 0)),
+ "DRAW_BOXES": (("draw_boxes",), lambda: b("DRAW_BOXES", 1)),
+ "CONFIDENCE": (("confidence",), lambda: float(os.environ.get("CONFIDENCE", "0.5"))),
+ "AUTO_ANALYZE": (("auto", "enabled"), lambda: b("AUTO_ANALYZE", 0)),
+ "AUTO_INTERVAL": (("auto", "interval"), lambda: int(os.environ.get("AUTO_INTERVAL", "300"))),
+ "KEYWORD_WATCH": (("keyword", "enabled"), lambda: b("KEYWORD_WATCH", 0)),
+ "KEYWORD_TERMS": (("keyword", "terms"), terms),
+ "KEYWORD_SOUND": (("keyword", "sound"), lambda: b("KEYWORD_SOUND", 1)),
+ "KEYWORD_NOTIFY": (("keyword", "notify"), lambda: b("KEYWORD_NOTIFY", 0)),
+ "SNAPSHOTS": (("snapshots", "enabled"), lambda: b("SNAPSHOTS", 0)),
+ "SNAPSHOTS_ON_DETECTION": (("snapshots", "on_detection"), lambda: b("SNAPSHOTS_ON_DETECTION", 0)),
+ "AZURE_API_VERSION": (("azure", "api_version"), lambda: os.environ.get("AZURE_API_VERSION", "v4")),
+ "AZURE_MONTHLY_BUDGET": (("azure", "monthly_budget"), lambda: int(os.environ.get("AZURE_MONTHLY_BUDGET", "4500"))),
+ "AZURE_BUDGET_MODE": (("azure", "budget_mode"), lambda: os.environ.get("AZURE_BUDGET_MODE", "soft")),
 }
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except OSError:
+    cfg = None
+except ValueError:
+    sys.exit("state/config.json isn't valid JSON. Fix it, or delete it to start from the defaults.")
+if cfg is None:
+    # A first install writes every setting, from the environment or its default, in the original layout.
+    cfg = {
+     "features": {"tags": b("FEATURE_TAGS", 1), "objects": b("FEATURE_OBJECTS", 1),
+       "caption": b("FEATURE_CAPTION", 1), "people": b("FEATURE_PEOPLE", 0),
+       "dense": b("FEATURE_DENSE", 0), "ocr": b("FEATURE_OCR", 0),
+       "brands": b("FEATURE_BRANDS", 0), "color": b("FEATURE_COLOR", 0)},
+     "draw_boxes": b("DRAW_BOXES", 1),
+     "confidence": float(os.environ.get("CONFIDENCE", "0.5")),
+     "auto": {"enabled": b("AUTO_ANALYZE", 0), "interval": int(os.environ.get("AUTO_INTERVAL", "300"))},
+     "keyword": {"enabled": b("KEYWORD_WATCH", 0), "terms": terms(),
+       "sound": b("KEYWORD_SOUND", 1), "notify": b("KEYWORD_NOTIFY", 0)},
+     "snapshots": {"enabled": b("SNAPSHOTS", 0), "on_detection": b("SNAPSHOTS_ON_DETECTION", 0)},
+     "ocr_panel": True,
+     "events": {"enabled": True, "max": 100},
+     "azure": {"api_version": os.environ.get("AZURE_API_VERSION", "v4"),
+       "monthly_budget": int(os.environ.get("AZURE_MONTHLY_BUDGET", "4500")),
+       "budget_mode": os.environ.get("AZURE_BUDGET_MODE", "soft")},
+    }
+else:
+    # A re-run applies only what it was given: anything else, including changes made in the UI, stays.
+    changed = []
+    for name in os.environ.get("PASSED_SETTINGS", "").split():
+        where, value = settings[name]
+        node = cfg
+        for key in where[:-1]:
+            node = node.setdefault(key, {})
+        new = value()
+        if node.get(where[-1]) != new:
+            changed.append("%s=%s" % (name, os.environ.get(name, "")))
+        node[where[-1]] = new
+    if changed:
+        print("  NOTE: state/config.json was kept. Applied from the environment: %s" % ", ".join(changed), file=sys.stderr)
 print(json.dumps(cfg, indent=2))
 PYEOF
+  mv -f "$cfg.new" "$cfg"
+}
+
+# config_value <key> [<key>...]: a value from state/config.json, by its key path, for the banner.
+config_value(){
+  python3 -c 'import json,sys
+v = json.load(open(sys.argv[1]))
+for k in sys.argv[2:]: v = v[k]
+print(v)' "$APP_DIR/state/config.json" "$@" 2>/dev/null
 }
 
 write_azure_env(){
@@ -328,10 +409,10 @@ setup_venv(){
   [ -d "$APP_DIR/venv" ] || python3 -m venv "$APP_DIR/venv"
   if [ "$AIR_GAPPED_MODE" -eq 1 ]; then
     [ -d "$OFFLINE_DIR/wheels" ] || die "offline bundle is missing Python wheels."
-    "$APP_DIR/venv/bin/pip" install --no-index --find-links "$OFFLINE_DIR/wheels" -r "$APP_DIR/requirements.txt" >/dev/null
+    "$APP_DIR/venv/bin/pip" install --no-index --find-links "$OFFLINE_DIR/wheels" -r "$SCRIPT_DIR/app/requirements.txt" >/dev/null
   else
     "$APP_DIR/venv/bin/pip" install --upgrade pip >/dev/null
-    "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt" >/dev/null
+    "$APP_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/app/requirements.txt" >/dev/null
   fi
   echo "  dependencies installed"
 }
@@ -441,10 +522,10 @@ EOF
   }
 }
 EOF
-  } > /etc/caddy/Caddyfile
+  } > /etc/caddy/Caddyfile.new
 
-  /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
-    || die "generated Caddyfile failed validation"
+  /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile.new --adapter caddyfile >/dev/null 2>&1 \
+    || { rm -f /etc/caddy/Caddyfile.new; die "generated Caddyfile failed validation"; }
 }
 
 write_install_env(){
@@ -473,6 +554,38 @@ start_services(){
   done
 }
 
+# validate_inputs: settings that would otherwise fail halfway through an install, after the app was stopped.
+validate_inputs(){
+  case "$TLS_MODE" in none|internal|auto) ;; *) die "invalid TLS_MODE '$TLS_MODE' (none | internal | auto)." ;; esac
+  case "$AUTH_MODE" in none|basic) ;; *) die "invalid AUTH_MODE '$AUTH_MODE' (none | basic)." ;; esac
+  case "$TCP_PORT" in ''|*[!0-9]*) die "invalid TCP_PORT '$TCP_PORT' (a port number)." ;; esac
+  [ "$TCP_PORT" -ge 1 ] && [ "$TCP_PORT" -le 65535 ] || die "invalid TCP_PORT '$TCP_PORT' (1-65535)."
+  # O6: auto TLS gets a certificate from a public CA, which needs a real name. The od.<hostname> fallback isn't one.
+  if [ "$TLS_MODE" = "auto" ] && [ -z "$FQDN_GIVEN" ]; then
+    die "TLS_MODE=auto needs FQDN set to a public DNS name that points at this host (got the fallback '$FQDN'). Set FQDN, or use TLS_MODE=internal."
+  fi
+}
+
+# wait_healthy: the app answers /healthz on its socket within 30 s. Through the venv's Python: an air-gapped host
+# may have no curl.
+wait_healthy(){
+  "$APP_DIR/venv/bin/python" - "$APP_DIR/web.sock" <<'PYEOF'
+import socket, sys, time
+deadline = time.time() + 30
+while time.time() < deadline:
+    try:
+        s = socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect(sys.argv[1])
+        s.sendall(b"GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        head = s.recv(32); s.close()
+        if head.startswith(b"HTTP/1.") and head.split()[1:2] == [b"200"]:
+            sys.exit(0)
+    except OSError:
+        pass
+    time.sleep(1)
+sys.exit(1)
+PYEOF
+}
+
 # ----------------------------------------------------------------- commands
 do_install(){
   require_root
@@ -487,20 +600,26 @@ do_install(){
     tar xzf "$SCRIPT_DIR/$OFFLINE_SENTINEL" -C "$OFFLINE_DIR"
     trap '[ -n "$OFFLINE_DIR" ] && rm -rf "$OFFLINE_DIR"' EXIT
   fi
-  # stop existing (idempotent reinstall)
-  for svc in od-caddy od-web od-cameras; do systemctl stop "$svc" 2>/dev/null || true; done
+  validate_inputs
+  # Everything that can fail runs first, while a running app keeps running. Its files and config change only after
+  # it has stopped.
   install_os_packages
   install_caddy
   create_user_dirs
+  setup_venv
+  write_caddyfile
+  for svc in od-caddy od-web od-cameras; do systemctl stop "$svc" 2>/dev/null || true; done
   copy_app_files
   write_cameras_json
   write_config_json
   write_azure_env
-  setup_venv
   write_systemd
-  write_caddyfile
+  mv -f /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
   write_install_env
   start_services
+  step "Checking the app answers"
+  wait_healthy || die "the app didn't answer /healthz within 30 s. Check: journalctl -u od-web -u od-cameras -u od-caddy"
+  echo "  healthy"
   echo
   echo "============================================================"
   echo " Object Detector Web v$SCRIPT_VERSION deployed."
@@ -508,7 +627,8 @@ do_install(){
   echo "   URL:   $scheme://$MGMT_IP:$TCP_PORT/"
   [ "$AUTH_MODE" = "basic" ] && echo "   Login: $ADMIN_USER / (your ADMIN_PASSWORD)" || true
   [ "$TLS_MODE" = "internal" ] && echo "   (TLS is self-signed - expect a one-time browser warning)" || true
-  echo "   Azure: $AZURE_API_VERSION  |  budget ${AZURE_MONTHLY_BUDGET} tx/mo ($AZURE_BUDGET_MODE)"
+  # From state/config.json, which is what the app uses.
+  echo "   Azure: $(config_value azure api_version)  |  budget $(config_value azure monthly_budget) tx/mo ($(config_value azure budget_mode))"
   echo "============================================================"
 }
 
@@ -682,7 +802,7 @@ Commands:
 Key variables (see README for the full table):
   AZURE_VISION_KEY, AZURE_VISION_ENDPOINT   (required)
   AZURE_API_VERSION=v4|v3.2   AZURE_MONTHLY_BUDGET=4500   AZURE_BUDGET_MODE=soft|hard
-  RTSP_URL=...   CAMERA_1_URL=... CAMERA_1_NAME=...   ENABLE_USB=true
+  RTSP_URL=...   CAMERA_1_URL=... CAMERA_1_NAME=...   ENABLE_USB=true   CAMERAS_RESET=true
   USB_KERNEL_TRACK=true|false  (ENABLE_USB: keep uvcvideo across kernel upgrades; default true)
   TLS_MODE=none|internal|auto   AUTH_MODE=none|basic   ADMIN_USER  ADMIN_PASSWORD   TCP_PORT
   FEATURE_TAGS/OBJECTS/CAPTION/PEOPLE/DENSE/OCR/BRANDS/COLOR=true|false
