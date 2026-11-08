@@ -12,7 +12,7 @@ W=$(mktemp -d -p /var/tmp); cd "$W" || exit 1
 cd "$REPO" || exit 1
 cp "$CI_HANDOFF/od-save.tar.gz" . && ok "put the bundle beside deploy.sh" || { bad "put the bundle beside deploy.sh"; echo "=== exit 1"; exit 1; }
 export AZURE_VISION_KEY=fake AZURE_VISION_ENDPOINT=https://fake.test AUTH_MODE=none TLS_MODE=none TCP_PORT=8080 RTSP_URL=rtsp://10.0.0.1/s
-./deploy.sh install > "$W/o" 2>&1 && ok "install with no route out" || { bad "install with no route out"; tail -8 "$W/o" | cut -c1-170; }
+./deploy.sh install > "$W/o" 2>&1 && ok "install with no route out" || { bad "install with no route out"; tail -8 "$W/o" | cut -c1-170; echo "  (the checks after it would only fail too)"; echo "=== exit 1"; exit 1; }
 grep -qi "offline" "$W/o" && ok "it installs from the bundle" || bad "it didn't say it used the bundle"
 for s in od-cameras od-web od-caddy; do systemctl is-active --quiet "$s" && ok "$s is active" || bad "$s isn't active"; done
 health() { [ "$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = 200 ]; }
