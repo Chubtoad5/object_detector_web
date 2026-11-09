@@ -1,5 +1,18 @@
 # Changelog — object_detector_web
 
+## v1.1.1 — 2026-11-09 — save on Rocky and RHEL without ffmpeg
+
+### Fixed
+- **`save` works on a `dnf` host where no enabled repo has `ffmpeg`** (spec 15, F3), as on Rocky and RHEL, which have
+  it in RPM Fusion. `save` asked for it anyway, and stopped. Now it leaves `ffmpeg` out and says so, as the online
+  install already does. The camera feed doesn't need it, since OpenCV's wheel brings its own FFmpeg libraries. The bundle's
+  `save-manifest.txt` lists what it holds, the offline install asks for that list, and the licence notice and written
+  offer name `ffmpeg` only when the bundle holds it. A bundle from before v1.1.1 installs as before.
+
+### Tests
+- `tests/unit/save-packages.bats`: the list on `dnf` with and without `ffmpeg`, and on `apt`, the offline list from the
+  manifest, and the licence text both ways.
+
 ## v1.1.0 — 2026-11-06 — Day-2 fixes
 
 Every defect was reproduced on an Ubuntu 24.04 VM first, and each fix has a test that failed before it. Commands and
