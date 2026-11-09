@@ -6,7 +6,7 @@
 #   All variables below are runtime-overridable:  sudo VAR=value ./deploy.sh
 # =============================================================================
 set -e
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.1.1"
 
 # The runtime settings state/config.json holds. Recorded before the defaults below fill them in: on a re-run, one the
 # caller passed replaces the kept value, and one it didn't pass keeps whatever the file (or the UI) has.
@@ -106,6 +106,28 @@ os_pkg_list(){
   esac
 }
 
+# The OS packages save bundles. On dnf, ffmpeg is often in no enabled repo (RHEL and Rocky have it in RPM Fusion): leave it
+# out and say so, as the online install does (spec 15, F3). The camera feed doesn't need it: OpenCV's wheel brings its
+# own FFmpeg libraries.
+save_pkg_list(){
+  local p out=""
+  for p in $(os_pkg_list); do
+    if [ "$p" = ffmpeg ] && [ "$PKG" = dnf ] && [ -z "$(dnf -q repoquery ffmpeg 2>/dev/null)" ]; then
+      echo "  NOTE: no enabled repo has ffmpeg (RHEL and Rocky have it in RPM Fusion), so the bundle leaves it out, as the online install does." >&2
+      continue
+    fi
+    out="$out $p"
+  done
+  echo "${out# }"
+}
+
+# The OS packages the extracted bundle holds, from its manifest. A bundle without that line gets this distro's full list.
+bundle_pkg_list(){
+  local listed=""
+  [ -f "$OFFLINE_DIR/save-manifest.txt" ] && listed=$(sed -n 's/^os_packages: //p' "$OFFLINE_DIR/save-manifest.txt")
+  if [ -n "$listed" ]; then echo "$listed"; else os_pkg_list; fi
+}
+
 caddy_arch(){
   case "$(uname -m)" in
     x86_64|amd64) echo amd64 ;;
@@ -181,7 +203,7 @@ install_os_packages(){
       || die "offline bundle is missing OS packages (install_packages.sh / offline-packages.tar.gz)"
     chmod +x "$OFFLINE_DIR/install_packages.sh"
     # shellcheck disable=SC2046 # one word per package
-    ( cd "$OFFLINE_DIR" && ./install_packages.sh offline $(os_pkg_list) )
+    ( cd "$OFFLINE_DIR" && ./install_packages.sh offline $(bundle_pkg_list) )
     if [ "${ENABLE_USB,,}" = "true" ]; then usb_verify_driver; fi
     return
   fi
@@ -649,8 +671,13 @@ ensure_save_tools(){
 # which on Debian/Ubuntu is a GPL build). Source for distro packages is available from the
 # OS distribution's own source archives; the offer is the portable backstop.
 generate_bundle_licenses(){
-  local dir="$1/LICENSES"
+  local dir="$1/LICENSES" pkgs="${2:-$(os_pkg_list)}" ffmpeg_line="" ffmpeg_offer=""
   mkdir -p "$dir"
+  case " $pkgs " in
+    *" ffmpeg "*)
+      ffmpeg_line="  ffmpeg ................................. GPL-2.0+ (Debian/Ubuntu --enable-gpl build); see WRITTEN_OFFER.txt"
+      ffmpeg_offer="ffmpeg (built under the GNU General Public License on Debian/Ubuntu) and " ;;
+  esac
   cat > "$dir/THIRD_PARTY_NOTICES.txt" <<EOF
 Third-party components redistributed in this object_detector_web air-gap bundle
 Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -658,9 +685,9 @@ Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 Caddy ${CADDY_VERSION} binary ............ Apache-2.0   https://github.com/caddyserver/caddy
 Python wheels: Flask (BSD-3), Gunicorn (MIT), gevent (MIT), OpenCV (Apache-2.0),
   NumPy (BSD-3), Azure AI Vision SDKs (MIT) .. see each wheel's own metadata
-OS packages [$(os_pkg_list)]:
-  ffmpeg ................................. GPL-2.0+ (Debian/Ubuntu --enable-gpl build); see WRITTEN_OFFER.txt
-  libglib2.0-0 .......................... LGPL-2.1+
+OS packages [$pkgs]:
+${ffmpeg_line:+$ffmpeg_line
+}  libglib2.0-0 .......................... LGPL-2.1+
   others (python3-venv/pip, libgl1) ..... permissive
 
 The Azure AI Vision service is proprietary Microsoft (called with your key; not
@@ -670,7 +697,7 @@ EOF
 WRITTEN OFFER FOR CORRESPONDING SOURCE CODE (GPL / LGPL)
 
 This air-gap bundle redistributes operating-system distribution packages, including
-ffmpeg (built under the GNU General Public License on Debian/Ubuntu) and glib (LGPL).
+${ffmpeg_offer}glib (LGPL).
 
 The corresponding source for these distribution packages is available from the OS
 distribution's own source archives (e.g. 'apt-get source <package>', or the
@@ -702,8 +729,9 @@ do_save(){
     curl -fsSL "$INSTALL_PKGS_URL" -o "$stage/install_packages.sh" || die "could not fetch install_packages.sh"
   fi
   chmod +x "$stage/install_packages.sh"
-  # shellcheck disable=SC2046 # one word per package
-  ( cd "$stage" && ./install_packages.sh save $(os_pkg_list) ) || die "OS package save failed"
+  local pkgs; pkgs=$(save_pkg_list)
+  # shellcheck disable=SC2086 # one word per package
+  ( cd "$stage" && ./install_packages.sh save $pkgs ) || die "OS package save failed"
 
   step "Downloading Python wheels"
   python3 -m venv "$stage/.dlvenv"
@@ -724,10 +752,10 @@ os: ${OS_ID} ${VERSION_ID:-}
 arch: $(caddy_arch)
 python: $(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])')
 caddy: ${CADDY_VERSION}
-os_packages: $(os_pkg_list)
+os_packages: $pkgs
 EOF
 
-  generate_bundle_licenses "$stage"
+  generate_bundle_licenses "$stage" "$pkgs"
 
   step "Packing $OFFLINE_SENTINEL"
   tar czf "$SCRIPT_DIR/$OFFLINE_SENTINEL" -C "$stage" .

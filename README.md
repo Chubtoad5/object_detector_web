@@ -248,7 +248,7 @@ those components goes to their authors:
 - [Flask](https://github.com/pallets/flask) (BSD-3-Clause) + [Gunicorn](https://github.com/benoitc/gunicorn) (MIT) + [gevent](https://github.com/gevent/gevent) (MIT) — web app + WSGI server
 - [OpenCV](https://github.com/opencv/opencv) (`opencv-python-headless`, Apache-2.0) + [NumPy](https://github.com/numpy/numpy) (BSD-3-Clause) — frame capture/processing
 - [Azure AI Vision SDKs](https://github.com/Azure/azure-sdk-for-python) (MIT) — client libraries for the **Azure AI Vision** cloud service (a proprietary Microsoft service; you bring your own key)
-- [FFmpeg](https://ffmpeg.org/) — used via the OS package for RTSP decoding (license depends on the distro build)
+- [FFmpeg](https://ffmpeg.org/) — used via the OS package for RTSP decoding (license depends on the distro build). On RHEL and Rocky it is in RPM Fusion, not the default repos, so the install and `save` go on without it there
 
 ## License
 
