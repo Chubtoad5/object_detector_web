@@ -30,9 +30,12 @@ frame() { curl -s -m 4 "$B/feed/$cam" 2>/dev/null | "$PY" -c 'import sys
 d=sys.stdin.buffer.read(); s=d.find(b"\xff\xd8"); e=d.find(b"\xff\xd9", s)
 sys.stdout.buffer.write(d[s:e+2] if s >= 0 and e > s else b"")' > "$1"; }
 frame /var/tmp/c5-a.jpg; sleep 3; frame /var/tmp/c5-b.jpg
-[ -s /var/tmp/c5-a.jpg ] && [ "$(head -c 2 /var/tmp/c5-a.jpg | od -An -tx1 | tr -d ' ')" = ffd8 ] && ok "the page's feed sends JPEG frames" || bad "no JPEG frame from /feed/$cam"
-cmp -s /var/tmp/c5-a.jpg "$REPO/camera_unavailable.jpg" && bad "the frame is the camera-unavailable placeholder" || ok "the frame isn't the placeholder"
-cmp -s /var/tmp/c5-a.jpg /var/tmp/c5-b.jpg && bad "two frames 3 s apart are identical: the video isn't live" || ok "two frames 3 s apart differ: the video is live"
+jpeg() { [ -s "$1" ] && [ "$(head -c 2 "$1" | od -An -tx1 | tr -d ' ')" = ffd8 ]; }
+real() { jpeg "$1" && ! cmp -s "$1" "$REPO/camera_unavailable.jpg"; }
+jpeg /var/tmp/c5-a.jpg && jpeg /var/tmp/c5-b.jpg && ok "the page's feed sends JPEG frames" || bad "no JPEG frames from /feed/$cam"
+real /var/tmp/c5-a.jpg && real /var/tmp/c5-b.jpg && ok "neither frame is the camera-unavailable placeholder" || bad "a frame is the placeholder, or missing"
+if real /var/tmp/c5-a.jpg && real /var/tmp/c5-b.jpg && ! cmp -s /var/tmp/c5-a.jpg /var/tmp/c5-b.jpg; then ok "two real frames 3 s apart differ: the video is live"
+else bad "the video isn't shown live: the two frames are missing, the placeholder, or the same"; fi
 c=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST "$B/api/snapshot/$cam"); [[ "$c" =~ ^2 ]] && ok "take a snapshot" || bad "the snapshot got $c"
 grep -q '\.jpg' <<< "$(curl -s -m 5 "$B/api/snapshots")" && ok "the snapshot is listed" || bad "no snapshot listed"
 rm -f /var/tmp/c5-a.jpg /var/tmp/c5-b.jpg
