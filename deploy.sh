@@ -112,7 +112,7 @@ os_pkg_list(){
 save_pkg_list(){
   local p out=""
   for p in $(os_pkg_list); do
-    if [ "$p" = ffmpeg ] && [ "$PKG" = dnf ] && [ -z "$(dnf -q repoquery ffmpeg 2>/dev/null)" ]; then
+    if [ "$p" = ffmpeg ] && [ "$PKG" = dnf ] && [ -z "$(dnf -q repoquery --available ffmpeg 2>/dev/null)" ]; then
       echo "  NOTE: no enabled repo has ffmpeg (RHEL and Rocky have it in RPM Fusion), so the bundle leaves it out, as the online install does." >&2
       continue
     fi
