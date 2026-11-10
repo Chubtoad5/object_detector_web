@@ -1,0 +1,3 @@
+# Spec 09's A5 for object_detector_web: the last release deployed and set up through its UI's API, then the commit under
+# test deployed over it with the same environment. Run by automation-ci's ci/scenario.sh.
+role host 2 4096 tests/scenarios/a5-upgrade.sh
