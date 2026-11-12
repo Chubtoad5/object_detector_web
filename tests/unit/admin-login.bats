@@ -175,3 +175,14 @@ hashed() { [ -e "$STUB_DIR/hash.stdin" ]; }
   run_install
   logs_in_with 'Aa1pass'
 }
+
+@test "O11: a stored login this release can't use stops a re-run without ADMIN_PASSWORD, instead of going back to changeme" {
+  mkdir -p "$CADDY_DIR"
+  printf 'user=admin!\nalgorithm=bcrypt\nhash=$2a$14$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRSTUVWXYZ01234\nfingerprint=x\n' > "$CADDY_DIR/admin-login"
+  run_install
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"stored admin login can't be used"* && "$output" == *"Nothing was changed"* ]]
+  ! called install_os_packages
+  run_install ADMIN_USER=admin ADMIN_PASSWORD='Aa1pass'
+  [ "$status" -eq 0 ]
+}

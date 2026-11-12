@@ -11,7 +11,10 @@
 - **An admin password over 72 bytes works** (O9). Caddy now hashes it with argon2id, reading it on stdin, so it's
   never on a command line, and the Caddyfile names `argon2id`. Before, the install stopped with Caddy's bcrypt error.
 - **An admin user name Caddy can't carry is refused before anything changes** (O10). A space stopped the install, and
-  `#admin` or `{$HOME}` gave a login that never worked.
+  `#admin` or `{$HOME}` gave a login that never worked. `ADMIN_USER` is now letters, digits and `. _ @ + -` (spec 21,
+  Q2). A few names that did work, such as `admin!`, are refused too. A stored login whose name or hash this release
+  can't use stops a re-run that doesn't pass `ADMIN_PASSWORD`, rather than going back to `changeme`; pass
+  `ADMIN_USER` and `ADMIN_PASSWORD` to set it again.
 - **A re-run without `ADMIN_PASSWORD` keeps the login** (O11). It reset the password to `changeme`. Now the stored
   login stays, an empty `ADMIN_PASSWORD` is refused, and only a first install with none gets `changeme`. A re-run with
   the same password keeps the same hash, so the Caddyfile doesn't change.

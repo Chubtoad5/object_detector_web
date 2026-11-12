@@ -589,7 +589,7 @@ login_fingerprint(){ printf '%s' "$1:$2" | sha256sum | cut -d' ' -f1; }
 # or earlier wrote, so the first upgrade without ADMIN_PASSWORD keeps that login too: its bcrypt hash, until a
 # password is passed. A stored login that doesn't fit today's rules counts as none.
 read_stored_login(){
-  STORED_USER="" STORED_ALGO="" STORED_HASH="" STORED_FP=""
+  STORED_USER="" STORED_ALGO="" STORED_HASH="" STORED_FP="" STORED_UNUSABLE=0
   local f="$CADDY_DIR/admin-login" line in_block=0 u h
   if [ -f "$f" ]; then
     STORED_USER=$(sed -n 's/^user=//p' "$f" | head -1)
@@ -611,6 +611,8 @@ read_stored_login(){
   fi
   if ! valid_admin_user "$STORED_USER" || [[ ! "$STORED_ALGO" =~ ^(bcrypt|argon2id)$ ]] \
      || [[ ! "$STORED_HASH" =~ ^\$[!-~]+$ ]]; then
+    # Something was stored, but this release can't use it: say so, rather than go back to changeme (rule 6)
+    [ -n "$STORED_USER$STORED_HASH" ] && STORED_UNUSABLE=1
     STORED_USER="" STORED_ALGO="" STORED_HASH="" STORED_FP=""
   fi
 }
@@ -629,6 +631,9 @@ check_admin_login(){
     die "ADMIN_PASSWORD is longer than 128 characters."
   fi
   read_stored_login
+  if [ "$STORED_UNUSABLE" = 1 ] && [ -z "$ADMIN_PASSWORD_SET" ]; then
+    die "the stored admin login can't be used (its user name has characters other than letters, digits and . _ @ + -, or it can't be read). Pass ADMIN_USER and ADMIN_PASSWORD to set it again. Nothing was changed."
+  fi
   if [ -z "$ADMIN_USER_GIVEN" ]; then ADMIN_USER=${STORED_USER:-admin}; fi
   valid_admin_user "$ADMIN_USER" \
     || die "ADMIN_USER can only have letters, digits and . _ @ + - (the Caddyfile and the browser's login can't carry other characters)."
