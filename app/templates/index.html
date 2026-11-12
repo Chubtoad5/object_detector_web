@@ -28,7 +28,7 @@
   .budget .bar{height:8px;border-radius:6px;background:#0a0e14;overflow:hidden;border:1px solid var(--border)}
   .budget .fill{height:100%;background:linear-gradient(90deg,var(--ok),var(--accent2));width:0%}
   .budget small{color:var(--muted);font-size:.68rem;margin-top:3px}
-  button,select,input[type=text],input[type=number]{font-family:inherit}
+  button,select,input[type=text],input[type=number],input[type=password]{font-family:inherit}
   .btn{background:var(--panel2);color:var(--txt);border:1px solid var(--border);
     padding:8px 14px;border-radius:10px;cursor:pointer;font-size:.85rem;transition:.15s}
   .btn:hover{border-color:var(--accent);background:#222b3a}
@@ -74,9 +74,10 @@
   .sect h4{margin:0 0 10px;font-size:.78rem;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
   .row{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:.86rem}
   .row label{flex:1}
-  .row input[type=number],.row input[type=text],.row select{background:#0a0e14;color:var(--txt);
+  .row input[type=number],.row input[type=text],.row input[type=password],.row select{background:#0a0e14;color:var(--txt);
     border:1px solid var(--border);border-radius:8px;padding:6px 8px;width:120px}
   .row input[type=text].wide{width:100%}
+  .row input.half{flex:1;min-width:0}
   .switch{position:relative;width:40px;height:22px;flex:none}
   .switch input{opacity:0;width:0;height:0}
   .slider{position:absolute;inset:0;background:#2a3242;border-radius:22px;transition:.2s;cursor:pointer}
@@ -247,7 +248,10 @@
     <div class="row"><label>Name</label><input type="text" id="newCamName" placeholder="e.g. Back Yard"></div>
     <div class="row"><label>Type</label>
       <select id="newCamType"><option value="rtsp">RTSP / network</option><option value="local">USB / local</option></select></div>
-    <div class="row" id="rtspRow"><input type="text" class="wide" id="newCamUrl" placeholder="rtsp://user:pass@host:554/stream"></div>
+    <div class="row" id="rtspRow"><input type="text" class="wide" id="newCamUrl" placeholder="rtsp://host:554/stream"></div>
+    <div class="row" id="credRow">
+      <input type="text" class="half" id="newCamUser" placeholder="User (if the camera asks)" autocomplete="off">
+      <input type="password" class="half" id="newCamPass" placeholder="Password" autocomplete="new-password"></div>
     <div class="row" id="usbRow" style="display:none">
       <select id="newCamDevice" style="flex:1"><option value="">— scan for devices —</option></select>
       <button class="btn" id="scanUsb">🔍 Scan</button></div>
@@ -322,6 +326,9 @@ function beep(){try{actx=actx||new (window.AudioContext||window.webkitAudioConte
   g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+.4);
   o.start();o.stop(actx.currentTime+.4);}catch(e){}}
 
+// Text for an innerHTML template: & < > " and ' as entities, so a camera's name shows as typed and never runs as markup.
+function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]);}
+
 // ---------- build camera grid ----------
 function buildGrid(cams){
   const grid=document.getElementById('grid');
@@ -333,7 +340,7 @@ function buildGrid(cams){
         <span class="pill off statpill"><span class="d"></span><span class="stxt">offline</span></span>
         <span class="meta"></span></div>
       <div class="stage">
-        <img src="/feed/${c.id}" alt="${c.name}">
+        <img src="/feed/${encodeURIComponent(c.id)}" alt="${esc(c.name)}">
         <canvas></canvas>
         <button class="iconbtn expand" title="Expand">⛶</button>
         <div class="matchbadge">● MATCH</div>
@@ -551,7 +558,7 @@ async function refreshEvents(){
   ev.slice(0,40).forEach(e=>{
     const d=document.createElement('div');d.className='evt';
     d.innerHTML=`<span class="t">${new Date(e.ts*1000).toLocaleTimeString()}</span>
-      <span>${e.cam_name}: <b>${e.terms.join(', ')}</b>${e.snapshot?` <a href="/snapshots/${e.snapshot}" target="_blank">📸</a>`:''}</span>`;
+      <span>${esc(e.cam_name)}: <b>${esc(e.terms.join(', '))}</b>${e.snapshot?` <a href="/snapshots/${e.snapshot}" target="_blank">📸</a>`:''}</span>`;
     box.appendChild(d);
   });
 }
@@ -627,7 +634,7 @@ async function loadGallery(){
     const m=it.meta||{};const ts=m.ts||it.mtime;
     const hit=(m.terms&&m.terms.length)?`<span class="hit">● ${m.terms.join(', ')}</span>`:'';
     const d=document.createElement('div');d.className='thumb';
-    d.innerHTML=`<img src="${it.url}" loading="lazy"><div class="cap"><b>${m.cam_name||it.file}</b>${fmtTime(ts)} ${hit}</div>`;
+    d.innerHTML=`<img src="${it.url}" loading="lazy"><div class="cap"><b>${esc(m.cam_name||it.file)}</b>${fmtTime(ts)} ${hit}</div>`;
     d.onclick=()=>openSnapView(it);
     g.appendChild(d);
   });
@@ -642,7 +649,7 @@ function openSnapView(it){
     ['Caption',m.caption||'–'],['Objects',(m.objects&&m.objects.length)?m.objects.join(', '):'–'],
     ['Tags',(m.tags&&m.tags.length)?m.tags.join(', '):'–'],
     ['Size',(it.size/1024).toFixed(0)+' KB']];
-  document.getElementById('svMeta').innerHTML=rows.map(r=>`<div><span class="k">${r[0]}</span> ${r[1]}</div>`).join('');
+  document.getElementById('svMeta').innerHTML=rows.map(r=>`<div><span class="k">${r[0]}</span> ${esc(r[1])}</div>`).join('');
   document.getElementById('snapView').classList.add('open');
 }
 function openSnaps(){document.getElementById('snapsModal').classList.add('open');loadGallery();}
@@ -653,19 +660,25 @@ async function loadCamsList(){
   const cams=await jget('/api/cameras');
   const box=document.getElementById('camsList');
   if(!cams.length){box.innerHTML='<div class="empty">No cameras configured yet. Add one below.</div>';return;}
-  box.innerHTML='';
+  box.textContent='';
+  // Built with textContent, never innerHTML: a name or URL shows as typed, and markup in it stays text. The API
+  // already shows each password as *** (O13, spec 21).
   cams.forEach(c=>{
     const where=c.type==='local'?(c.device||''):(c.url||'');
     const d=document.createElement('div');d.className='row';
-    d.innerHTML=`<label><b>${c.name}</b> <span class="muted">· ${c.type} · ${where}</span></label>
-      <button class="btn delCam" data-id="${c.id}">Remove</button>`;
+    const label=document.createElement('label');
+    const name=document.createElement('b');name.textContent=c.name||c.id;
+    const info=document.createElement('span');info.className='muted';info.textContent='· '+c.type+' · '+where;
+    label.append(name,' ',info);
+    const del=document.createElement('button');del.className='btn delCam';del.textContent='Remove';
+    del.onclick=()=>removeCam(c.id);
+    d.append(label,del);
     box.appendChild(d);
   });
-  box.querySelectorAll('.delCam').forEach(b=>b.onclick=()=>removeCam(b.dataset.id));
 }
 async function removeCam(id){
   if(!confirm('Remove this camera?'))return;
-  await fetch('/api/cameras/'+id,{method:'DELETE'});
+  await fetch('/api/cameras/'+encodeURIComponent(id),{method:'DELETE'});
   toast('Camera removed');loadCamsList();refreshState();
 }
 async function scanUsb(){
@@ -681,10 +694,14 @@ async function addCam(){
   if(type==='local'){body.device=document.getElementById('newCamDevice').value;
     if(!body.device){document.getElementById('addCamMsg').textContent='Pick a USB device (Scan first).';return;}}
   else{body.url=document.getElementById('newCamUrl').value.trim();
-    if(!body.url){document.getElementById('addCamMsg').textContent='Enter an RTSP URL.';return;}}
+    if(!body.url){document.getElementById('addCamMsg').textContent='Enter an RTSP URL.';return;}
+    // As typed, not trimmed: the app percent-encodes them into the URL (O8, spec 21).
+    body.user=document.getElementById('newCamUser').value;
+    body.password=document.getElementById('newCamPass').value;}
   const r=await jpost('/api/cameras',body);
   if(r.status==='ok'){document.getElementById('addCamMsg').textContent='';
     document.getElementById('newCamName').value='';document.getElementById('newCamUrl').value='';
+    document.getElementById('newCamUser').value='';document.getElementById('newCamPass').value='';
     toast('Camera added: '+r.camera.name);loadCamsList();refreshState();}
   else document.getElementById('addCamMsg').textContent=r.message||'Add failed';
 }
@@ -702,6 +719,7 @@ document.getElementById('newCamType').onchange=e=>{
   const usb=e.target.value==='local';
   document.getElementById('usbRow').style.display=usb?'flex':'none';
   document.getElementById('rtspRow').style.display=usb?'none':'flex';
+  document.getElementById('credRow').style.display=usb?'none':'flex';
 };
 document.getElementById('camModalClose').onclick=closeCam;
 document.getElementById('camModalAnalyze').onclick=async()=>{await analyzeOne(modalCamId);drawCamModal();};
