@@ -6,7 +6,7 @@
 #   All variables below are runtime-overridable:  sudo VAR=value ./deploy.sh
 # =============================================================================
 set -e
-SCRIPT_VERSION="1.1.1"
+SCRIPT_VERSION="1.2.0"
 
 # The runtime settings state/config.json holds. Recorded before the defaults below fill them in: on a re-run, one the
 # caller passed replaces the kept value, and one it didn't pass keeps whatever the file (or the UI) has.
@@ -16,6 +16,10 @@ for _setting in $RUNTIME_SETTINGS; do
   [ -n "${!_setting:-}" ] && PASSED_SETTINGS="$PASSED_SETTINGS $_setting"
 done
 FQDN_GIVEN="${FQDN:-}"
+# O11 (spec 21): whether the caller passed the admin login, recorded before the defaults below. A re-run without
+# ADMIN_PASSWORD keeps the stored login, and an empty one is refused. Only a first install with none gets changeme.
+ADMIN_PASSWORD_SET="${ADMIN_PASSWORD+set}"
+ADMIN_USER_GIVEN="${ADMIN_USER:-}"
 
 # ----------------------------------------------------------------- config
 # --- Azure Computer Vision (Image Analysis) ---
@@ -26,7 +30,11 @@ AZURE_MONTHLY_BUDGET="${AZURE_MONTHLY_BUDGET:-4500}"    # free F0 cap is 5000 tx
 AZURE_BUDGET_MODE="${AZURE_BUDGET_MODE:-soft}"          # soft (warn) | hard (block)
 
 # --- Cameras (RTSP_URL = convenience single cam; or CAMERA_1_URL .. CAMERA_8_URL) ---
+# A camera's login goes in RTSP_USER / RTSP_PASSWORD (or CAMERA_<N>_USER / _PASSWORD), percent-encoded into the URL
+# for you; or inside the URL, already encoded, as before.
 RTSP_URL="${RTSP_URL:-}"
+RTSP_USER="${RTSP_USER:-}"
+RTSP_PASSWORD="${RTSP_PASSWORD:-}"
 ENABLE_USB="${ENABLE_USB:-false}"                       # true => add a /dev/video0 local camera
 USB_KERNEL_TRACK="${USB_KERNEL_TRACK:-true}"            # ENABLE_USB only: keep uvcvideo across kernel upgrades
 CAMERAS_RESET="${CAMERAS_RESET:-false}"                 # true => cameras.json is rebuilt from the environment only, dropping cameras added in the UI
@@ -34,8 +42,8 @@ CAMERAS_RESET="${CAMERAS_RESET:-false}"                 # true => cameras.json i
 # --- Web / TLS / auth ---
 TLS_MODE="${TLS_MODE:-internal}"                        # none | internal (self-signed) | auto (LE)
 AUTH_MODE="${AUTH_MODE:-basic}"                         # none | basic
-ADMIN_USER="${ADMIN_USER:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-changeme}"
+ADMIN_USER="${ADMIN_USER:-admin}"                       # a re-run without it keeps the stored user
+ADMIN_PASSWORD="${ADMIN_PASSWORD-}"                     # first install without it: changeme; a re-run keeps the stored one
 MGMT_IP="${MGMT_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
 FQDN="${FQDN:-od.$(hostname -f 2>/dev/null || hostname)}"
 if [ "$TLS_MODE" = "none" ]; then TCP_PORT="${TCP_PORT:-80}"; else TCP_PORT="${TCP_PORT:-443}"; fi
@@ -74,7 +82,10 @@ LICENSE_OFFER_CONTACT="${LICENSE_OFFER_CONTACT:-the Chubtoad5 project via https:
 AIR_GAPPED_MODE=0
 OFFLINE_DIR=""
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# Where the Caddy binary and its config live. Fixed, not settings: tests point them at a stub and a temp folder.
+CADDY_BIN=/usr/local/bin/caddy
+CADDY_DIR=/etc/caddy
 
 # ----------------------------------------------------------------- helpers
 step(){ echo "--- $* ---"; }
@@ -271,7 +282,8 @@ create_user_dirs(){
 copy_app_files(){
   step "Installing application files"
   [ -d "$SCRIPT_DIR/app" ] || die "app/ directory not found next to deploy.sh"
-  cp "$SCRIPT_DIR/app/analyzer.py" "$SCRIPT_DIR/app/camera_supervisor.py" "$SCRIPT_DIR/app/app.py" "$APP_DIR/"
+  cp "$SCRIPT_DIR/app/analyzer.py" "$SCRIPT_DIR/app/camera_supervisor.py" "$SCRIPT_DIR/app/app.py" \
+     "$SCRIPT_DIR/app/camera_url.py" "$APP_DIR/"
   cp "$SCRIPT_DIR/app/requirements.txt" "$APP_DIR/"
   cp "$SCRIPT_DIR/app/templates/index.html" "$APP_DIR/templates/"
   if [ -f "$SCRIPT_DIR/camera_unavailable.jpg" ]; then
@@ -281,14 +293,32 @@ copy_app_files(){
   fi
 }
 
-write_cameras_json(){
-  step "Writing cameras.json"
-  export RTSP_URL ENABLE_USB CAMERAS_RESET
-  for i in 1 2 3 4 5 6 7 8; do export "CAMERA_${i}_URL" "CAMERA_${i}_NAME" "CAMERA_${i}_TYPE" "CAMERA_${i}_DEVICE" 2>/dev/null || true; done
-  local out="$APP_DIR/cameras.json.new"
-  python3 - "$APP_DIR/cameras.json" > "$out" <<'PYEOF' || { rm -f "$out"; die "couldn't build cameras.json (output above)."; }
+# cameras_py check|write <cameras.json>: the cameras the environment defines. "write" prints the cameras.json to store;
+# "check" only checks them, for validate_inputs. A camera user or password that can't work is refused, one message
+# per setting, and never shows the value (O8, spec 21). app/camera_url.py builds each URL, as the app does.
+cameras_py(){
+  local i
+  export RTSP_URL RTSP_USER RTSP_PASSWORD ENABLE_USB CAMERAS_RESET
+  for i in 1 2 3 4 5 6 7 8; do
+    export "CAMERA_${i}_URL" "CAMERA_${i}_NAME" "CAMERA_${i}_TYPE" "CAMERA_${i}_DEVICE" "CAMERA_${i}_USER" "CAMERA_${i}_PASSWORD" 2>/dev/null || true
+  done
+  python3 -I - "$SCRIPT_DIR/app" "$@" <<'PYEOF'
 import os, sys, json
+sys.path.insert(0, sys.argv[1])
+from camera_url import build_url, CredentialError
+mode, path = sys.argv[2], sys.argv[3]
 env = lambda k: os.environ.get(k, "").strip()
+raw = lambda k: os.environ.get(k, "")   # a user or password is used exactly as given: spaces at either end included
+errors = []
+def warn(msg):
+    if mode == "write":
+        print("  WARNING: " + msg, file=sys.stderr)
+def login_url(url_var, user_var, password_var):
+    try:
+        return build_url(env(url_var), raw(user_var), raw(password_var), (url_var, user_var, password_var))
+    except CredentialError as e:
+        errors.append(str(e))
+        return None
 mine = []
 def add(cid, name, ctype, url=None, device=None):
     c = {"id": cid, "name": name, "type": ctype, "enabled": True, "source": "env"}
@@ -300,17 +330,31 @@ for i in range(1, 9):
     u, d = env("CAMERA_%d_URL" % i), env("CAMERA_%d_DEVICE" % i)
     t = env("CAMERA_%d_TYPE" % i) or ("local" if d and not u else "rtsp")
     if not (u or d):
-        if env("CAMERA_%d_TYPE" % i) or env("CAMERA_%d_NAME" % i):
-            print("  WARNING: CAMERA_%d is set, but has no CAMERA_%d_URL or CAMERA_%d_DEVICE, so it is skipped." % (i, i, i), file=sys.stderr)
+        if env("CAMERA_%d_TYPE" % i) or env("CAMERA_%d_NAME" % i) or raw("CAMERA_%d_USER" % i) or raw("CAMERA_%d_PASSWORD" % i):
+            warn("CAMERA_%d is set, but has no CAMERA_%d_URL or CAMERA_%d_DEVICE, so it is skipped." % (i, i, i))
         continue
     if t == "rtsp" and not u:
-        print("  WARNING: CAMERA_%d_TYPE=rtsp needs CAMERA_%d_URL, so it is skipped." % (i, i), file=sys.stderr)
+        warn("CAMERA_%d_TYPE=rtsp needs CAMERA_%d_URL, so it is skipped." % (i, i))
         continue
+    if u:
+        u = login_url("CAMERA_%d_URL" % i, "CAMERA_%d_USER" % i, "CAMERA_%d_PASSWORD" % i)
+        if u is None:
+            continue
     explicit = True
     add("cam%d" % i, env("CAMERA_%d_NAME" % i) or "Camera %d" % i, t, url=u or None, device=d or None)
 rtsp = env("RTSP_URL")
 if rtsp and not explicit:
-    add("cam1", "RTSP Camera", "rtsp", url=rtsp)
+    rtsp = login_url("RTSP_URL", "RTSP_USER", "RTSP_PASSWORD")
+    if rtsp:
+        add("cam1", "RTSP Camera", "rtsp", url=rtsp)
+elif not rtsp and (raw("RTSP_USER") or raw("RTSP_PASSWORD")):
+    warn("RTSP_USER or RTSP_PASSWORD is set, but RTSP_URL isn't, so they are unused.")
+if errors:
+    for e in errors:
+        print("  ERROR: " + e, file=sys.stderr)
+    sys.exit(1)
+if mode == "check":
+    sys.exit(0)
 if os.environ.get("ENABLE_USB", "false").lower() == "true":
     add("usb0", "USB Camera", "local", device="/dev/video0")
 # A re-run keeps the cameras added in the UI. The environment's own cameras (source "env") are replaced by what it
@@ -318,7 +362,7 @@ if os.environ.get("ENABLE_USB", "false").lower() == "true":
 kept = []
 if os.environ.get("CAMERAS_RESET", "false").lower() != "true":
     try:
-        with open(sys.argv[1]) as f:
+        with open(path) as f:
             old = json.load(f).get("cameras", [])
         if not isinstance(old, list):
             old = []
@@ -328,6 +372,22 @@ if os.environ.get("CAMERAS_RESET", "false").lower() != "true":
     kept = [c for c in old if isinstance(c, dict) and c.get("source") != "env" and c.get("id") not in ids]
 print(json.dumps({"cameras": mine + kept}, indent=2))
 PYEOF
+}
+
+# check_cameras: the camera settings' check, for validate_inputs, before anything changes. A host with no python3 yet
+# (a first install on a minimal image) gets the same check in write_cameras_json, still before the app is touched.
+check_cameras(){
+  command -v python3 >/dev/null 2>&1 || return 0
+  cameras_py check "" || die "a camera setting can't work (above). Nothing was changed."
+}
+
+write_cameras_json(){
+  step "Writing cameras.json"
+  local out="$APP_DIR/cameras.json.new"
+  # Mode 0600 from the start, since camera passwords are in it (O13). The app's user gets it before it's moved into
+  # place, so the running app can still read it until the swap.
+  ( umask 077; cameras_py write "$APP_DIR/cameras.json" > "$out" ) || { rm -f "$out"; die "couldn't build cameras.json (output above)."; }
+  chown "$APP_USER:$APP_USER" "$out" 2>/dev/null || true
   mv -f "$out" "$APP_DIR/cameras.json"
   echo "  $(python3 -c 'import json;print(len(json.load(open("'"$APP_DIR"'/cameras.json"))["cameras"]))') camera(s) configured"
 }
@@ -419,12 +479,20 @@ for k in sys.argv[2:]: v = v[k]
 print(v)' "$APP_DIR/state/config.json" "$@" 2>/dev/null
 }
 
+# env_file_value <value>: the value as a systemd EnvironmentFile reads it back exactly: in double quotes, with \ " `
+# and $ escaped (O12, spec 21). Unquoted, systemd dropped every \ and the spaces at either end, and a value ending in
+# \ swallowed the next line.
+env_file_value(){
+  local v=$1
+  v=${v//\\/\\\\}; v=${v//\"/\\\"}; v=${v//\`/\\\`}; v=${v//\$/\\\$}
+  printf '"%s"' "$v"
+}
+
 write_azure_env(){
   step "Writing Azure credentials (mode 600)"
-  cat > "$APP_DIR/azure.env" <<EOF
-AZURE_VISION_KEY=$AZURE_VISION_KEY
-AZURE_VISION_ENDPOINT=$AZURE_VISION_ENDPOINT
-EOF
+  ( umask 077
+    printf 'AZURE_VISION_KEY=%s\nAZURE_VISION_ENDPOINT=%s\n' "$(env_file_value "$AZURE_VISION_KEY")" \
+      "$(env_file_value "$AZURE_VISION_ENDPOINT")" > "$APP_DIR/azure.env" )
   chmod 600 "$APP_DIR/azure.env"
 }
 
@@ -505,9 +573,103 @@ WantedBy=multi-user.target
 EOF
 }
 
+# ----------------------------------------------------------------- admin login (O9-O11, spec 21)
+# The login's user name: letters, digits and . _ @ + -, which the Caddyfile and basic auth carry as they are. Listed
+# out, not [[:alnum:]] or A-Z, which can match other letters in some locales.
+valid_admin_user(){
+  [[ "$1" =~ ^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._@+-]+$ ]]
+}
+
+# login_fingerprint <hash> <password>: ties a stored hash to the password it was made from, as SeaweedFS's
+# auth_fingerprint does. The password reaches sha256sum on stdin, never in its arguments.
+login_fingerprint(){ printf '%s' "$1:$2" | sha256sum | cut -d' ' -f1; }
+
+# read_stored_login: the login the last run left, as STORED_USER, STORED_ALGO, STORED_HASH and STORED_FP (all empty
+# when there is none). From $CADDY_DIR/admin-login (0600), or else from the basic_auth block of a Caddyfile that 1.1.1
+# or earlier wrote, so the first upgrade without ADMIN_PASSWORD keeps that login too: its bcrypt hash, until a
+# password is passed. A stored login that doesn't fit today's rules counts as none.
+read_stored_login(){
+  STORED_USER="" STORED_ALGO="" STORED_HASH="" STORED_FP="" STORED_UNUSABLE=0
+  local f="$CADDY_DIR/admin-login" line in_block=0 u h
+  if [ -f "$f" ]; then
+    STORED_USER=$(sed -n 's/^user=//p' "$f" | head -1)
+    STORED_ALGO=$(sed -n 's/^algorithm=//p' "$f" | head -1)
+    STORED_HASH=$(sed -n 's/^hash=//p' "$f" | head -1)
+    STORED_FP=$(sed -n 's/^fingerprint=//p' "$f" | head -1)
+  elif [ -f "$CADDY_DIR/Caddyfile" ]; then
+    while IFS= read -r line; do
+      if [ "$in_block" -eq 0 ]; then
+        if [[ "$line" =~ ^[[:space:]]*basic_auth([[:space:]]+(bcrypt|argon2id))?[[:space:]]*\{[[:space:]]*$ ]]; then
+          in_block=1; STORED_ALGO=${BASH_REMATCH[2]:-bcrypt}
+        fi
+        continue
+      fi
+      [[ "$line" =~ ^[[:space:]]*\} ]] && break
+      read -r u h _ <<< "$line"
+      if [ -n "$u" ] && [ -n "$h" ]; then STORED_USER=$u STORED_HASH=$h; break; fi
+    done < "$CADDY_DIR/Caddyfile"
+  fi
+  if ! valid_admin_user "$STORED_USER" || [[ ! "$STORED_ALGO" =~ ^(bcrypt|argon2id)$ ]] \
+     || [[ ! "$STORED_HASH" =~ ^\$[!-~]+$ ]]; then
+    # Something was stored, but this release can't use it: say so, rather than go back to changeme (rule 6)
+    [ -n "$STORED_USER$STORED_HASH" ] && STORED_UNUSABLE=1
+    STORED_USER="" STORED_ALGO="" STORED_HASH="" STORED_FP=""
+  fi
+}
+
+# check_admin_login: the admin login's checks, for validate_inputs, before anything changes (rule 7). Sets ADMIN_USER
+# to the user the login will have: the one passed, else the stored one, else admin.
+check_admin_login(){
+  [ "$AUTH_MODE" = "basic" ] || return 0
+  if [ -n "$ADMIN_PASSWORD_SET" ] && [ -z "$ADMIN_PASSWORD" ]; then
+    die "ADMIN_PASSWORD is set but empty. Set it to the password you want, or leave it unset to keep the current login."
+  fi
+  if [[ "$ADMIN_PASSWORD" == *[[:cntrl:]]* ]]; then
+    die "ADMIN_PASSWORD can't contain a control character, such as a tab or a newline."
+  fi
+  if [ "${#ADMIN_PASSWORD}" -gt 128 ]; then
+    die "ADMIN_PASSWORD is longer than 128 characters."
+  fi
+  read_stored_login
+  if [ "$STORED_UNUSABLE" = 1 ] && [ -z "$ADMIN_PASSWORD_SET" ]; then
+    die "the stored admin login can't be used (its user name has characters other than letters, digits and . _ @ + -, or it can't be read). Pass ADMIN_USER and ADMIN_PASSWORD to set it again. Nothing was changed."
+  fi
+  if [ -z "$ADMIN_USER_GIVEN" ]; then ADMIN_USER=${STORED_USER:-admin}; fi
+  valid_admin_user "$ADMIN_USER" \
+    || die "ADMIN_USER can only have letters, digits and . _ @ + - (the Caddyfile and the browser's login can't carry other characters)."
+}
+
+# admin_login_hash: the login's hash for the Caddyfile, as ADMIN_ALGO, ADMIN_HASH and ADMIN_FP, and ADMIN_LOGIN for the
+# banner (given, kept or default). Runs after check_admin_login.
+#  - ADMIN_PASSWORD passed: the stored hash when it's argon2id and made from this password, so the Caddyfile doesn't
+#    change; otherwise a new argon2id hash. Caddy reads the password on stdin, so it's never in a command line, and
+#    argon2id has no length limit (bcrypt stopped at 72 bytes, O9).
+#  - not passed: the stored login as it is (O11). Only a first install, with nothing stored, gets changeme.
+admin_login_hash(){
+  local pw=$ADMIN_PASSWORD
+  ADMIN_LOGIN=given
+  if [ -z "$ADMIN_PASSWORD_SET" ]; then
+    if [ -n "$STORED_HASH" ]; then
+      ADMIN_ALGO=$STORED_ALGO ADMIN_HASH=$STORED_HASH ADMIN_FP=$STORED_FP ADMIN_LOGIN=kept
+      echo "  ADMIN_PASSWORD wasn't passed: the login keeps its password."
+      return 0
+    fi
+    pw=changeme ADMIN_LOGIN=default
+  fi
+  if [ "$STORED_ALGO" = argon2id ] && [ -n "$STORED_FP" ] && [ "$(login_fingerprint "$STORED_HASH" "$pw")" = "$STORED_FP" ]; then
+    ADMIN_ALGO=argon2id ADMIN_HASH=$STORED_HASH ADMIN_FP=$STORED_FP
+    return 0
+  fi
+  ADMIN_HASH=$(printf '%s\n' "$pw" | "$CADDY_BIN" hash-password --algorithm argon2id) || ADMIN_HASH=""
+  [[ "$ADMIN_HASH" == '$argon2id$'* ]] \
+    || die "Caddy couldn't hash ADMIN_PASSWORD with argon2id (Caddy $CADDY_VERSION). Use the default CADDY_VERSION. Nothing was changed."
+  ADMIN_ALGO=argon2id
+  ADMIN_FP=$(login_fingerprint "$ADMIN_HASH" "$pw")
+}
+
 write_caddyfile(){
   step "Writing Caddyfile (TLS=$TLS_MODE, AUTH=$AUTH_MODE)"
-  mkdir -p /etc/caddy
+  mkdir -p "$CADDY_DIR"
   local site global_block="" tls_line="" auth_block=""
 
   case "$TLS_MODE" in
@@ -520,8 +682,13 @@ write_caddyfile(){
   esac
 
   if [ "$AUTH_MODE" = "basic" ]; then
-    local hash; hash="$(/usr/local/bin/caddy hash-password --plaintext "$ADMIN_PASSWORD")"
-    auth_block=$'    basic_auth {\n      '"$ADMIN_USER $hash"$'\n    }'
+    admin_login_hash
+    # The algorithm is named, so an argon2id hash and a bcrypt one kept from before 1.2.0 both work (O9).
+    auth_block="    basic_auth $ADMIN_ALGO {"$'\n'"      $ADMIN_USER $ADMIN_HASH"$'\n'"    }"
+    # The login this Caddyfile holds, for the next run. Moved into place with the Caddyfile.
+    ( umask 077
+      printf 'user=%s\nalgorithm=%s\nhash=%s\nfingerprint=%s\n' "$ADMIN_USER" "$ADMIN_ALGO" "$ADMIN_HASH" "$ADMIN_FP" \
+        > "$CADDY_DIR/admin-login.new" )
   fi
 
   {
@@ -546,10 +713,10 @@ EOF
   }
 }
 EOF
-  } > /etc/caddy/Caddyfile.new
+  } > "$CADDY_DIR/Caddyfile.new"
 
-  /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile.new --adapter caddyfile >/dev/null 2>&1 \
-    || { rm -f /etc/caddy/Caddyfile.new; die "generated Caddyfile failed validation"; }
+  "$CADDY_BIN" validate --config "$CADDY_DIR/Caddyfile.new" --adapter caddyfile >/dev/null 2>&1 \
+    || { rm -f "$CADDY_DIR/Caddyfile.new" "$CADDY_DIR/admin-login.new"; die "generated Caddyfile failed validation"; }
 }
 
 write_install_env(){
@@ -588,6 +755,9 @@ validate_inputs(){
   if [ "$TLS_MODE" = "auto" ] && [ -z "$FQDN_GIVEN" ]; then
     die "TLS_MODE=auto needs FQDN set to a public DNS name that points at this host (got the fallback '$FQDN'). Set FQDN, or use TLS_MODE=internal."
   fi
+  # Spec 21: the admin login and the camera logins, each refused here with its own message, before anything changes.
+  check_admin_login
+  check_cameras
 }
 
 # wait_healthy: the app answers /healthz on its socket within 30 s. Through the venv's Python: an air-gapped host
@@ -640,7 +810,8 @@ do_install(){
   copy_app_files
   write_azure_env
   write_systemd
-  mv -f /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
+  mv -f "$CADDY_DIR/Caddyfile.new" "$CADDY_DIR/Caddyfile"
+  if [ -f "$CADDY_DIR/admin-login.new" ]; then mv -f "$CADDY_DIR/admin-login.new" "$CADDY_DIR/admin-login"; fi
   write_install_env
   start_services
   step "Checking the app answers"
@@ -651,7 +822,13 @@ do_install(){
   echo " Object Detector Web v$SCRIPT_VERSION deployed."
   local scheme="http"; [ "$TLS_MODE" != "none" ] && scheme="https" || true
   echo "   URL:   $scheme://$MGMT_IP:$TCP_PORT/"
-  [ "$AUTH_MODE" = "basic" ] && echo "   Login: $ADMIN_USER / (your ADMIN_PASSWORD)" || true
+  if [ "$AUTH_MODE" = "basic" ]; then
+    case "$ADMIN_LOGIN" in
+      kept)    echo "   Login: $ADMIN_USER / (the password set before: ADMIN_PASSWORD wasn't passed, so it's unchanged)" ;;
+      default) echo "   Login: $ADMIN_USER / changeme (the default: set ADMIN_PASSWORD to change it)" ;;
+      *)       echo "   Login: $ADMIN_USER / (your ADMIN_PASSWORD)" ;;
+    esac
+  fi
   [ "$TLS_MODE" = "internal" ] && echo "   (TLS is self-signed - expect a one-time browser warning)" || true
   # From state/config.json, which is what the app uses.
   echo "   Azure: $(config_value azure api_version)  |  budget $(config_value azure monthly_budget) tx/mo ($(config_value azure budget_mode))"
@@ -782,7 +959,8 @@ do_uninstall(){
     rm -f "/etc/systemd/system/$svc.service"
   done
   systemctl daemon-reload
-  rm -f /etc/caddy/Caddyfile /etc/caddy/Caddyfile.new; rmdir /etc/caddy 2>/dev/null || true
+  rm -f "$CADDY_DIR/Caddyfile" "$CADDY_DIR/Caddyfile.new" "$CADDY_DIR/admin-login" "$CADDY_DIR/admin-login.new"
+  rmdir "$CADDY_DIR" 2>/dev/null || true
   rm -f /usr/local/bin/caddy
   # clear any shared-memory frame buffers
   rm -f /dev/shm/od_frame_* 2>/dev/null || true
@@ -834,9 +1012,11 @@ Commands:
 Key variables (see README for the full table):
   AZURE_VISION_KEY, AZURE_VISION_ENDPOINT   (required)
   AZURE_API_VERSION=v4|v3.2   AZURE_MONTHLY_BUDGET=4500   AZURE_BUDGET_MODE=soft|hard
-  RTSP_URL=...   CAMERA_1_URL=... CAMERA_1_NAME=...   ENABLE_USB=true   CAMERAS_RESET=true
+  RTSP_URL=...  RTSP_USER  RTSP_PASSWORD   (the login is percent-encoded into the URL for you)
+  CAMERA_1_URL=... CAMERA_1_USER CAMERA_1_PASSWORD CAMERA_1_NAME=...   ENABLE_USB=true   CAMERAS_RESET=true
   USB_KERNEL_TRACK=true|false  (ENABLE_USB: keep uvcvideo across kernel upgrades; default true)
   TLS_MODE=none|internal|auto   AUTH_MODE=none|basic   ADMIN_USER  ADMIN_PASSWORD   TCP_PORT
+    (a re-run without ADMIN_PASSWORD keeps the login; a first install without it gets admin / changeme)
   FEATURE_TAGS/OBJECTS/CAPTION/PEOPLE/DENSE/OCR/BRANDS/COLOR=true|false
   DRAW_BOXES  CONFIDENCE  AUTO_ANALYZE  AUTO_INTERVAL  KEYWORD_WATCH  KEYWORD_TERMS
 EOF

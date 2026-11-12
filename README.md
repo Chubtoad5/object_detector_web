@@ -61,12 +61,14 @@ cd object_detector_web
 chmod +x deploy.sh
 sudo AZURE_VISION_KEY="<your-key>" \
      AZURE_VISION_ENDPOINT="https://<your-resource>.cognitiveservices.azure.com/" \
-     RTSP_URL="rtsp://user:pass@192.168.1.50:554/stream" \
-     ADMIN_PASSWORD="change-me" \
+     RTSP_URL="rtsp://192.168.1.50:554/stream" \
+     RTSP_USER="viewer" RTSP_PASSWORD='<camera password>' \
+     ADMIN_PASSWORD='<admin password>' \
      ./deploy.sh
 ```
 
 Then open `https://<server-ip>/` and log in as `admin` / `<ADMIN_PASSWORD>`.
+Put passwords in single quotes, so the shell passes them as typed (write a `'` in one as `'\''`).
 (Default TLS is self-signed — accept the one-time browser warning. Set `TLS_MODE=none` for plain HTTP on port 80.)
 
 Add more cameras live from the **🎥 Cameras** button, tune inference in **⚙ Settings**, and view captures in **🖼 Snapshots**.
@@ -97,12 +99,14 @@ All are runtime-overridable: `sudo VAR=value ./deploy.sh`.
 | `AZURE_MONTHLY_BUDGET` | `4500` | Monthly transaction cap the guard enforces (F0 free cap is 5000). |
 | `AZURE_BUDGET_MODE` | `soft` | `soft` (warn) or `hard` (block at the cap). |
 | `RTSP_URL` | – | Convenience single RTSP camera. |
+| `RTSP_USER` / `RTSP_PASSWORD` | – | The `RTSP_URL` camera's login, as typed. They are percent-encoded into the URL for you. See [Camera logins](#camera-logins). |
 | `CAMERA_<N>_URL` / `_NAME` / `_TYPE` / `_DEVICE` | – | Define up to 8 cameras (`N`=1..8; `_TYPE`=`rtsp`\|`local`). A local camera needs only `_DEVICE`. One with nothing usable is skipped with a warning. |
+| `CAMERA_<N>_USER` / `_PASSWORD` | – | That camera's login, as typed, percent-encoded into `CAMERA_<N>_URL` for you. |
 | `CAMERAS_RESET` | `false` | `true` rebuilds `cameras.json` from the environment only, dropping cameras added in the UI. See [Cameras](#cameras). |
 | `ENABLE_USB` | `false` | Add a `/dev/video0` local camera and load `uvcvideo` (+ `linux-modules-extra`). |
 | `TLS_MODE` | `internal` | `none` (HTTP) \| `internal` (self-signed) \| `auto` (Let's Encrypt). `auto` needs `FQDN` set to a public name for this host, and refuses without it. |
 | `AUTH_MODE` | `basic` | `none` \| `basic`. |
-| `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / `changeme` | Basic-auth credentials. **Change the password.** |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / `changeme` | Basic-auth login. **Change the password.** Any password of up to 128 printable characters works as typed. The user name takes letters, digits and `. _ @ + -`. A re-run without them keeps the stored login; only a first install with no `ADMIN_PASSWORD` gets `changeme`. An empty `ADMIN_PASSWORD` is refused. See [Security](#security). |
 | `TCP_PORT` | `443` (or `80` if `TLS_MODE=none`) | Listen port. |
 | `MGMT_IP` / `FQDN` | auto | Bind IP / FQDN for TLS. |
 | `FEATURE_TAGS/OBJECTS/CAPTION/PEOPLE/DENSE/OCR/BRANDS/COLOR` | tags/objects/caption=`true`, rest `false` | Default inference toggles. |
@@ -120,7 +124,7 @@ All are runtime-overridable: `sudo VAR=value ./deploy.sh`.
 
 Define cameras at install via `RTSP_URL` or `CAMERA_<N>_*`, or manage them live in the **🎥 Cameras** modal:
 
-- **RTSP/network** — paste an `rtsp://…` URL.
+- **RTSP/network** — paste an `rtsp://…` URL, and type the camera's user and password in their own fields.
 - **USB/local** — **Scan** auto-discovers `/dev/video*` devices (needs `ENABLE_USB=true` at install so `uvcvideo` is loaded).
 
 **Re-running `deploy.sh` keeps the cameras you added in the UI.** Cameras the environment defines are marked
@@ -136,6 +140,31 @@ other camera stays:
   clears `RTSP_URL`, the old `cam1` stays: delete it in the UI, or use `CAMERAS_RESET=true`.
 
 A full `uninstall` still removes `cameras.json`, UI cameras included.
+
+### Camera logins
+
+Give a camera's user and password in their own settings: `RTSP_USER` / `RTSP_PASSWORD` for `RTSP_URL`,
+`CAMERA_<N>_USER` / `CAMERA_<N>_PASSWORD` for `CAMERA_<N>_URL`, or the **User** and **Password** fields of the
+**Add a Camera** form. They are used exactly as typed, symbols and spaces included. The installer and the app
+percent-encode them into the URL (every byte but `A-Z a-z 0-9 - . _ ~` becomes `%XX`), and FFmpeg decodes them
+before it logs in, under Basic and Digest auth alike.
+
+- **A URL with the login already inside it works as before.** It is stored as given, so any symbol in the password
+  must already be percent-encoded: a `/`, `?` or `#` left as typed stops the camera from connecting, and a `%`
+  followed by two hex digits is read as an encoded byte. To encode a password by hand, run this and type the password:
+
+  ```bash
+  python3 -c 'import sys, urllib.parse as u; print(u.quote(sys.stdin.readline().rstrip("\n"), safe=""))'
+  ```
+
+  `p@ss/w#rd` becomes `p%40ss%2Fw%23rd`, so the URL is `rtsp://viewer:p%40ss%2Fw%23rd@192.168.1.50:554/stream`.
+- **Refused, with a message that names the setting but never shows the value:** a user with a `:` (a camera
+  login splits the user from the password there); a password without a user; a control character; a URL that has a
+  login inside it *and* a separate user or password; and, for an RTSP camera, a user and password that take more than
+  127 bytes once encoded (`user:password`). FFmpeg reads at most 127 and silently cuts the rest off. Each symbol or
+  space takes 3 bytes: with a user such as `viewer`, a password of 40 symbols fits, or one of 120 letters and digits.
+- **Passwords are never shown.** The **Manage Cameras** list and `GET /api/cameras` show each one as `***`
+  (`rtsp://viewer:***@…`). `cameras.json`, which holds them, is mode `0600`, readable only by the app's user and root.
 
 ### Runtime settings on a re-run
 
@@ -197,9 +226,23 @@ nothing (it throttles instead of billing). High-level steps:
 
 ## Security
 
-- **Caddy** terminates optional self-signed TLS (`TLS_MODE=internal`) and **basic auth** (`AUTH_MODE=basic`,
-  bcrypt-hashed). `/healthz` is exempt from auth.
-- Azure credentials are stored in a `chmod 600` `EnvironmentFile`, not in the systemd unit.
+- **Caddy** terminates optional self-signed TLS (`TLS_MODE=internal`) and **basic auth** (`AUTH_MODE=basic`).
+  `/healthz` is exempt from auth.
+- **The admin login is hashed with argon2id,** so a password of any length up to 128 characters works (bcrypt, before
+  1.2.0, stopped at 72 bytes). Caddy reads the password on stdin, never from a command line. `/etc/caddy/admin-login`
+  (mode `0600`) keeps the user, the hash and a fingerprint of the password it was made from:
+  - a re-run without `ADMIN_PASSWORD` keeps the login as it is, and one without `ADMIN_USER` keeps the user;
+  - a re-run with the same password keeps the same hash, so the Caddyfile doesn't change;
+  - a new password is hashed again;
+  - an empty `ADMIN_PASSWORD`, a control character, more than 128 characters, or a user name with anything but
+    letters, digits and `. _ @ + -` is refused before anything is stopped or changed.
+
+  The first run of 1.2.0 over an older install keeps that install's bcrypt login when no `ADMIN_PASSWORD` is passed,
+  and moves to argon2id when one is. The installer never prints the password. `uninstall` removes the stored login.
+- Azure credentials are stored in a `chmod 600` `EnvironmentFile`, not in the systemd unit. Their values are written
+  in double quotes with `\ " $` and `` ` `` escaped, so systemd reads them back exactly.
+- Camera passwords are shown as `***` in the UI and the API, and `cameras.json` is mode `0600`. See
+  [Camera logins](#camera-logins).
 - The web app binds only to a local unix socket; Caddy is the sole network listener.
 - **Change `ADMIN_PASSWORD`** from the default.
 

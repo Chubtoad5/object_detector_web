@@ -25,6 +25,7 @@ from flask import (Flask, Response, jsonify, request, send_from_directory)
 import gevent
 
 from analyzer import Analyzer, RateLimited, AnalyzerError, ALL_FEATURES
+import camera_url
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
@@ -42,7 +43,7 @@ BUDGET_FILE = os.path.join(PERSIST_DIR, "budget.json")
 STATUS_FILE = os.path.join(STATE_DIR, "cameras_status.json")
 
 FRAME_W, FRAME_H, FRAME_C = 1280, 720, 3
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 app = Flask(__name__)
 
@@ -157,10 +158,29 @@ def load_cameras():
 
 
 def save_cameras(cams):
+    # Mode 0600: camera passwords are in it (O13, spec 21). os.open gives a new file that mode, and fchmod fixes a
+    # .tmp left from an older run.
     tmp = CAMERAS_FILE + ".tmp"
-    with open(tmp, "w") as f:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump({"cameras": cams}, f, indent=2)
     os.replace(tmp, CAMERAS_FILE)
+
+
+def shown_cameras(cams):
+    """The cameras as the API sends them: each URL's password as *** (O13). Only what's sent is masked. cameras.json
+    keeps the real URLs, and no route writes back what it sent, so a camera never gets the mask as its password."""
+    out = []
+    for c in cams:
+        if isinstance(c, dict) and isinstance(c.get("url"), str):
+            c = dict(c, url=camera_url.mask_url(c["url"]))
+        out.append(c)
+    return out
+
+
+def _text(v):
+    return "" if v is None else str(v)
 
 
 def reload_supervisor():
@@ -436,7 +456,7 @@ def api_state():
 @app.route("/api/cameras", methods=["GET", "POST"])
 def api_cameras():
     if request.method == "GET":
-        return jsonify(load_cameras())
+        return jsonify(shown_cameras(load_cameras()))
     data = request.get_json(force=True, silent=True) or {}
     ctype = data.get("type", "rtsp")
     name = (data.get("name") or "").strip()
@@ -456,6 +476,13 @@ def api_cameras():
         url = (data.get("url") or "").strip()
         if not url.startswith("rtsp://") and not url.startswith("http"):
             return jsonify({"status": "error", "message": "RTSP/HTTP URL required"}), 400
+        # The form's user and password, percent-encoded into the URL as deploy.sh does (O8). Used exactly as typed:
+        # not trimmed, since a password can start or end with a space.
+        try:
+            url = camera_url.build_url(url, _text(data.get("user")), _text(data.get("password")),
+                                       ("The URL", "User", "Password"))
+        except camera_url.CredentialError as e:
+            return jsonify({"status": "error", "message": str(e)}), 400
         n = 1
         while ("cam%d" % n) in ids:
             n += 1
@@ -465,7 +492,7 @@ def api_cameras():
     cams.append(cam)
     save_cameras(cams)
     reload_supervisor()
-    return jsonify({"status": "ok", "camera": cam, "cameras": cams})
+    return jsonify({"status": "ok", "camera": shown_cameras([cam])[0], "cameras": shown_cameras(cams)})
 
 
 @app.route("/api/cameras/<cid>", methods=["DELETE"])
@@ -474,7 +501,7 @@ def api_camera_delete(cid):
     save_cameras(cams)
     reload_supervisor()
     _analysis.pop(cid, None)
-    return jsonify({"status": "ok", "cameras": cams})
+    return jsonify({"status": "ok", "cameras": shown_cameras(cams)})
 
 
 @app.route("/api/discover_usb")
