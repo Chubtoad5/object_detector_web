@@ -1,6 +1,6 @@
 # Changelog — object_detector_web
 
-## v1.2.1 — unreleased — install-packages is pinned
+## v1.2.1 — unreleased — install-packages is pinned, and re-runs work on Rocky 10.3
 
 Spec 28 (chubtoad-automation).
 
@@ -10,6 +10,9 @@ Spec 28 (chubtoad-automation).
   `INSTALL_PACKAGES_REF` picks another tag, branch or commit, as in the suite's other installers, and `INSTALL_PKGS_URL`
   (or `INSTALL_PACKAGES_URL`, the others' name for it) still wins over it. A ref that isn't a tag, branch or commit name
   is refused before anything is fetched.
+- **A re-run without `ADMIN_PASSWORD` works on Rocky 10.3.** It stopped with "the stored admin login can't be used",
+  because the check of the stored hash used a character range that Rocky 10.3's glibc doesn't match under its default
+  `en_US.UTF-8` locale. The check now uses `[[:graph:]]`, which every locale reads the same way.
 
 ## v1.2.0 — 2026-11-12 — Any password works, and camera logins get their own settings
 

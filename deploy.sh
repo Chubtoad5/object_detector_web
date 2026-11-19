@@ -612,8 +612,10 @@ read_stored_login(){
       if [ -n "$u" ] && [ -n "$h" ]; then STORED_USER=$u STORED_HASH=$h; break; fi
     done < "$CADDY_DIR/Caddyfile"
   fi
+  # [[:graph:]], not a range such as [!-~]: under en_US.UTF-8, Rocky 10.3's glibc 2.39 doesn't match a valid hash with
+  # the range, so every re-run without ADMIN_PASSWORD stopped there (spec 28, O11)
   if ! valid_admin_user "$STORED_USER" || [[ ! "$STORED_ALGO" =~ ^(bcrypt|argon2id)$ ]] \
-     || [[ ! "$STORED_HASH" =~ ^\$[!-~]+$ ]]; then
+     || [[ ! "$STORED_HASH" =~ ^\$[[:graph:]]+$ ]]; then
     # Something was stored, but this release can't use it: say so, rather than go back to changeme (rule 6)
     [ -n "$STORED_USER$STORED_HASH" ] && STORED_UNUSABLE=1
     STORED_USER="" STORED_ALGO="" STORED_HASH="" STORED_FP=""
