@@ -899,7 +899,9 @@ EOF
 # check_install_packages_ref: INSTALL_PACKAGES_REF goes into the fetch URL, so it must be a tag, branch or commit name
 # (spec 28). A URL given in INSTALL_PKGS_URL or INSTALL_PACKAGES_URL is used as it is, and the ref isn't checked.
 check_install_packages_ref(){
-  [[ "$INSTALL_PACKAGES_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$INSTALL_PACKAGES_REF" != *..* ]] \
+  # Letters spelled out, not A-Z ranges, which match other letters under en_US.UTF-8 (as valid_admin_user does)
+  local w='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  [[ "$INSTALL_PACKAGES_REF" =~ ^[$w][$w._/-]*$ && "$INSTALL_PACKAGES_REF" != *..* ]] \
     || die "INSTALL_PACKAGES_REF '$INSTALL_PACKAGES_REF' isn't a tag, branch or commit name"
 }
 
