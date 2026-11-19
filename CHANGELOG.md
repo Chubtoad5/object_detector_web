@@ -1,5 +1,16 @@
 # Changelog — object_detector_web
 
+## v1.2.1 — unreleased — install-packages is pinned
+
+Spec 28 (chubtoad-automation).
+
+### Fixed
+- **`save` fetches install-packages at a pinned release, `v1.1.3`**, not its `main`. Before, every install-packages merge
+  changed what `save` and the air-gapped install ran, at once and for every user, with no test of this repo against it.
+  `INSTALL_PACKAGES_REF` picks another tag, branch or commit, as in the suite's other installers, and `INSTALL_PKGS_URL`
+  (or `INSTALL_PACKAGES_URL`, the others' name for it) still wins over it. A ref that isn't a tag, branch or commit name
+  is refused before anything is fetched.
+
 ## v1.2.0 — 2026-11-12 — Any password works, and camera logins get their own settings
 
 ### Fixed

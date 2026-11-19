@@ -6,7 +6,7 @@
 #   All variables below are runtime-overridable:  sudo VAR=value ./deploy.sh
 # =============================================================================
 set -e
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.2.1"
 
 # The runtime settings state/config.json holds. Recorded before the defaults below fill them in: on a re-run, one the
 # caller passed replaces the kept value, and one it didn't pass keeps whatever the file (or the UI) has.
@@ -77,7 +77,10 @@ PURGE="${PURGE:-false}"                                 # uninstall: also delete
 
 # --- Air-gap ---
 OFFLINE_SENTINEL="${OFFLINE_SENTINEL:-od-save.tar.gz}"  # presence next to deploy.sh => offline install
-INSTALL_PKGS_URL="${INSTALL_PKGS_URL:-https://raw.githubusercontent.com/Chubtoad5/install-packages/main/install_packages.sh}"
+INSTALL_PACKAGES_REF="${INSTALL_PACKAGES_REF:-v1.1.3}"  # install-packages release (tag, branch or commit) whose install_packages.sh save bundles (spec 28)
+INSTALL_PKGS_URL="${INSTALL_PKGS_URL:-${INSTALL_PACKAGES_URL:-}}"  # INSTALL_PACKAGES_URL, the suite's other name for it, works too
+INSTALL_PKGS_URL_GIVEN=0; [ -n "$INSTALL_PKGS_URL" ] && INSTALL_PKGS_URL_GIVEN=1
+INSTALL_PKGS_URL="${INSTALL_PKGS_URL:-https://raw.githubusercontent.com/Chubtoad5/install-packages/${INSTALL_PACKAGES_REF}/install_packages.sh}"  # a given URL wins over the ref
 LICENSE_OFFER_CONTACT="${LICENSE_OFFER_CONTACT:-the Chubtoad5 project via https://github.com/Chubtoad5}"  # contact named in the air-gap bundle's GPL written offer
 AIR_GAPPED_MODE=0
 OFFLINE_DIR=""
@@ -891,6 +894,13 @@ EOF
   echo "  Wrote LICENSES/ (manifest + GPL/LGPL written offer for bundled OS packages)."
 }
 
+# check_install_packages_ref: INSTALL_PACKAGES_REF goes into the fetch URL, so it must be a tag, branch or commit name
+# (spec 28). A URL given in INSTALL_PKGS_URL or INSTALL_PACKAGES_URL is used as it is, and the ref isn't checked.
+check_install_packages_ref(){
+  [[ "$INSTALL_PACKAGES_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$INSTALL_PACKAGES_REF" != *..* ]] \
+    || die "INSTALL_PACKAGES_REF '$INSTALL_PACKAGES_REF' isn't a tag, branch or commit name"
+}
+
 do_save(){
   require_root
   detect_distro
@@ -903,7 +913,8 @@ do_save(){
   if [ -f "$SCRIPT_DIR/install_packages.sh" ]; then
     cp "$SCRIPT_DIR/install_packages.sh" "$stage/"
   else
-    curl -fsSL "$INSTALL_PKGS_URL" -o "$stage/install_packages.sh" || die "could not fetch install_packages.sh"
+    [ "$INSTALL_PKGS_URL_GIVEN" = 1 ] || check_install_packages_ref
+    curl -fsSL "$INSTALL_PKGS_URL" -o "$stage/install_packages.sh" || die "could not fetch install_packages.sh from $INSTALL_PKGS_URL"
   fi
   chmod +x "$stage/install_packages.sh"
   local pkgs; pkgs=$(save_pkg_list)
