@@ -1,5 +1,20 @@
 # Changelog — object_detector_web
 
+## v1.2.1 — unreleased — install-packages is pinned, and re-runs keep the login in every locale
+
+Spec 28 (chubtoad-automation).
+
+### Fixed
+- **`save` fetches install-packages at a pinned release, `v1.1.3`**, not its `main`. Before, every install-packages merge
+  changed what `save` and the air-gapped install ran, at once and for every user, with no test of this repo against it.
+  `INSTALL_PACKAGES_REF` picks another tag, branch or commit, as in the suite's other installers, and `INSTALL_PKGS_URL`
+  (or `INSTALL_PACKAGES_URL`, the others' name for it) still wins over it. A ref that isn't a tag, branch or commit name
+  is refused before anything is fetched.
+- **A re-run without `ADMIN_PASSWORD` works under `en_US.UTF-8` and similar locales.** It stopped with "the stored admin
+  login can't be used", because the check of the stored hash used a character range that glibc doesn't match under
+  those locales. CI saw it on Rocky 10.3, whose default locale is `en_US.UTF-8`, and Ubuntu's glibc does the same. The
+  check now uses `[[:graph:]]`, which every locale reads the same way.
+
 ## v1.2.0 — 2026-11-12 — Any password works, and camera logins get their own settings
 
 ### Fixed

@@ -116,6 +116,8 @@ All are runtime-overridable: `sudo VAR=value ./deploy.sh`.
 | `KEYWORD_SOUND` / `KEYWORD_NOTIFY` | `true` / `false` | Alert sound / desktop notification. |
 | `SNAPSHOTS` / `SNAPSHOTS_ON_DETECTION` | `false` / `false` | Save snapshots / only on keyword match. |
 | `CADDY_VERSION` | `2.11.4` | Pinned Caddy binary version. |
+| `INSTALL_PACKAGES_REF` | `v1.1.3` | The install-packages release (tag, branch or commit) whose `install_packages.sh` `save` bundles. |
+| `INSTALL_PKGS_URL` | the `INSTALL_PACKAGES_REF` raw URL | A full URL for `install_packages.sh`, used as given. Wins over `INSTALL_PACKAGES_REF`. `INSTALL_PACKAGES_URL`, the name the suite's other installers use, works too. |
 | `APP_DIR` / `APP_USER` | `/opt/object_detector_web_app` / `acvuser` | Install dir / service user. |
 | `PERSIST_DIR` | `/var/lib/object_detector_web` | Where the monthly transaction tally is stored — **outside `APP_DIR` so it survives re-installs/redeploys**. |
 | `PURGE` | `false` | On uninstall, also delete state + snapshots + the persisted budget. |

@@ -186,3 +186,12 @@ hashed() { [ -e "$STUB_DIR/hash.stdin" ]; }
   run_install ADMIN_USER=admin ADMIN_PASSWORD='Aa1pass'
   [ "$status" -eq 0 ]
 }
+@test "spec 28: a stored argon2id login is read back, and its check uses no locale-dependent range (Rocky 10.3)" {
+  mkdir -p "$CADDY_DIR"
+  printf 'user=admin\nalgorithm=argon2id\nhash=$argon2id$v=19$m=47104,t=1,p=1$c2FsdA$aGFzaA\nfingerprint=x\n' > "$CADDY_DIR/admin-login"
+  read_stored_login
+  [ "$STORED_UNUSABLE" = 0 ]
+  [ "$STORED_USER" = admin ] && [ "$STORED_ALGO" = argon2id ]
+  # Under en_US.UTF-8, glibc 2.39 (Rocky 10.3) doesn't match a valid hash with [!-~]; this test container has only C
+  ! declare -f read_stored_login | grep -qF -- '-~]' || false
+}
